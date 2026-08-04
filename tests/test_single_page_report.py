@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import base64
 from datetime import datetime, timezone
+import gzip
 import html
 import json
 from pathlib import Path
@@ -99,6 +101,16 @@ def _jtl(*samples: str) -> str:
     return "<testResults>\n" + "".join(samples) + "</testResults>\n"
 
 
+def _decode_compressed_payload(card_html: str) -> dict[str, str]:
+    payload_match = re.search(
+        r"<template[^>]+data-compressed-payload[^>]*>([^<]+)</template>",
+        card_html,
+    )
+    assert payload_match is not None
+    compressed = base64.b64decode(payload_match.group(1).strip())
+    return json.loads(gzip.decompress(compressed).decode("utf-8"))
+
+
 def test_report_is_one_page_with_parameters_and_without_removed_fields(
     tmp_path: Path,
 ):
@@ -129,12 +141,27 @@ def test_report_is_one_page_with_parameters_and_without_removed_fields(
     assert not (run_directory / "scripts").exists()
 
     report = result.report_path.read_text(encoding="utf-8")
+    assert (
+        "请求执行失败，或任一断言未通过（例如返回数据为空、关键字段缺失）"
+        "时，会判定为失败。"
+    ) not in report
+    assert "点击可定位请求" not in report
     assert "自动化巡检" in report
     assert "销售排行" in report
     assert "请求参数" in report
-    assert "date_start=2026-08-01&amp;page=1" in report
     assert "响应参数" in report
-    assert '{"code":200,"total":46}' in html.unescape(report)
+    sample_card = re.search(
+        r'<article[^>]+data-sample-id="sample-000001".*?</article>',
+        report,
+        flags=re.DOTALL,
+    )
+    assert sample_card is not None
+    assert _decode_compressed_payload(sample_card.group(0)) == {
+        "request": "date_start=2026-08-01&page=1",
+        "response": '{"code":200,"total":46}',
+    }
+    assert "date_start=2026-08-01&amp;page=1" not in report
+    assert "total&quot;" not in report
     assert "request-header-secret" not in report
     assert "response-header-secret" not in report
     assert "request-body-must-not-replace-query" not in report
@@ -154,8 +181,13 @@ def test_report_is_one_page_with_parameters_and_without_removed_fields(
         assert removed_label not in report
     assert 'href="scripts/' not in report
     assert 'href="samples/' not in report
+    assert 'data-all-groups-toggle' in report
     assert 'data-all-details-toggle' in report
-    assert '>展开全部</span>' in report
+    assert 'data-print-report' not in report
+    assert 'data-print-preparation-warning' not in report
+    assert '打印完整报告' not in report
+    assert '>展开全部接口组</span>' in report
+    assert '>展开全部正文</span>' in report
 
     manifest = json.loads(result.manifest_path.read_text(encoding="utf-8"))
     assert manifest["schema_version"] == 1
@@ -213,12 +245,42 @@ def test_failed_interface_overview_replaces_script_dimension(
     assert overview is not None
     overview_html = overview.group(0)
     assert "失败接口概览" in overview_html
+    assert (
+        "请求执行失败，或任一断言未通过（例如返回数据为空、关键字段缺失）"
+        "时，会判定为失败。"
+    ) in overview_html
+    assert "点击可定位请求" in overview_html
     assert "失败 1 / 2" in overview_html
     assert "失败率 50%" in overview_html
     assert overview_html.count("data-failed-overview-item") == 1
     assert "库存查询失败接口" in overview_html
     assert "https://example.test/failed" in overview_html
     assert "1970-01-01 08:00:01" in overview_html
+    assert "失败次数" in overview_html
+    assert "失败数据范围" in overview_html
+    headings = re.findall(
+        r'<th scope="col">(.*?)</th>',
+        overview_html,
+        flags=re.DOTALL,
+    )
+    heading_texts = [
+        " ".join(re.sub(r"<[^>]+>", " ", heading).split())
+        for heading in headings
+    ]
+    assert heading_texts == [
+        "接口",
+        "失败次数",
+        "失败数据范围 点击可定位请求",
+        "请求时间",
+    ]
+    assert overview_html.index("失败数据范围") < overview_html.index(
+        "请求时间"
+    )
+    assert 'data-failure-target=' in overview_html
+    assert (
+        'aria-label="查看 未携带时间条件 对应失败请求"'
+        in overview_html
+    )
     assert ">响应码<" not in overview_html
     assert ">耗时<" not in overview_html
     assert "503" not in overview_html
@@ -394,10 +456,15 @@ def test_query_data_range_filter_metadata_covers_overview_and_details(
         report,
     )
     assert len(overview_rows) == 2
-    assert 'data-query-data-range="2026-06"' in overview_rows[0]
-    assert 'data-period-always-visible="false"' in overview_rows[0]
-    assert 'data-query-data-range="未携带时间条件"' in overview_rows[1]
-    assert 'data-period-always-visible="true"' in overview_rows[1]
+    overview_targets = re.findall(
+        r'<button[^>]+data-failure-target[^>]*>',
+        report,
+    )
+    assert len(overview_targets) == 2
+    assert 'data-query-data-range="2026-06"' in overview_targets[0]
+    assert 'data-period-always-visible="false"' in overview_targets[0]
+    assert 'data-query-data-range="未携带时间条件"' in overview_targets[1]
+    assert 'data-period-always-visible="true"' in overview_targets[1]
     assert "data-overview-visible-count" in report
 
     june_search_text = re.search(
@@ -520,12 +587,25 @@ def test_get_query_uses_url_fallback_and_post_body_uses_sampler_fallback(
     )
 
     result = generate_suite_report(_suite(run_directory, execution))
-    report = html.unescape(result.report_path.read_text(encoding="utf-8"))
+    report = result.report_path.read_text(encoding="utf-8")
 
-    assert "page=2&keyword=%E5%BC%A0%E4%B8%89" in report
-    assert '{"name":"张三"}' in report
-    assert "get-response" in report
-    assert "post-response" in report
+    cards = re.findall(
+        r'<article[^>]+data-sample-id="sample-\d+".*?</article>',
+        report,
+        flags=re.DOTALL,
+    )
+    assert len(cards) == 2
+    payloads = [_decode_compressed_payload(card) for card in cards]
+    assert payloads == [
+        {
+            "request": "page=2&keyword=%E5%BC%A0%E4%B8%89",
+            "response": "get-response",
+        },
+        {"request": '{"name":"张三"}', "response": "post-response"},
+    ]
+    assert '{&quot;name&quot;:&quot;张三&quot;}' not in report
+    assert "get-response" not in report
+    assert "post-response" not in report
 
 
 def test_failed_requests_are_first_and_toggle_state_is_explicit(
@@ -564,7 +644,11 @@ def test_failed_requests_are_first_and_toggle_state_is_explicit(
     assert len(
         re.findall(r"<button\b[^>]*\bdata-all-details-toggle\b", report)
     ) == 1
-    assert ">收起全部</span>" in report
+    assert len(
+        re.findall(r"<button\b[^>]*\bdata-all-groups-toggle\b", report)
+    ) == 1
+    assert ">收起全部接口组</span>" in report
+    assert ">收起全部正文</span>" in report
     failed_card = re.search(
         r'<article[^>]+data-sample-id="sample-000002".*?</article>',
         report,
@@ -599,25 +683,41 @@ def test_same_endpoint_requests_are_grouped_without_query_before_status(
             _sample(
                 label="订单六月通过",
                 url="https://example.test/orders?month=2026-06",
+                query="date_start=2026-06-01&amp;date_end=2026-06-30",
             ),
             _sample(
                 label="用户六月失败",
                 success=False,
                 url="https://example.test/users?month=2026-06",
+                query="date_start=2026-06-01&amp;date_end=2026-06-30",
             ),
             _sample(
                 label="订单七月失败",
                 success=False,
                 url="https://example.test/orders?month=2026-07",
+                query="date_start=2026-07-01&amp;date_end=2026-07-31",
             ),
             _sample(
                 label="用户八月失败",
                 success=False,
                 url="https://example.test/users?month=2026-08",
+                query="date_start=2026-08-01&amp;date_end=2026-08-31",
+            ),
+            _sample(
+                label="用户八月重复失败",
+                success=False,
+                url="https://example.test/users?month=2026-08&amp;retry=1",
+                query="date_start=2026-08-01&amp;date_end=2026-08-31",
             ),
             _sample(
                 label="订单八月通过",
-                url="https://example.test/orders?month=2026-08",
+                url="HTTPS://EXAMPLE.TEST/orders?month=2026-08#result",
+                query="date_start=2026-08-01&amp;date_end=2026-08-31",
+            ),
+            _sample(
+                label="健康检查通过",
+                url="https://example.test/health",
+                query="page=1",
             ),
         ),
     )
@@ -626,10 +726,46 @@ def test_same_endpoint_requests_are_grouped_without_query_before_status(
     report = result.report_path.read_text(encoding="utf-8")
 
     details = report[report.index('<section class="details-area"') :]
-    assert details.index("订单七月失败") < details.index("订单六月通过")
-    assert details.index("订单六月通过") < details.index("订单八月通过")
-    assert details.index("订单八月通过") < details.index("用户六月失败")
-    assert details.index("用户六月失败") < details.index("用户八月失败")
+    assert re.findall(
+        r'<article[^>]+data-sample-id="([^"]+)"',
+        details,
+    ) == [
+        "sample-000003",
+        "sample-000001",
+        "sample-000006",
+        "sample-000002",
+        "sample-000004",
+        "sample-000005",
+        "sample-000007",
+    ]
+
+    endpoint_groups = re.findall(
+        r'<section[^>]+data-endpoint-group[^>]*>.*?</section>',
+        details,
+        flags=re.DOTALL,
+    )
+    assert len(endpoint_groups) == 3
+    orders_group = next(
+        group for group in endpoint_groups if "https://example.test/orders" in group
+    )
+    users_group = next(
+        group for group in endpoint_groups if "https://example.test/users" in group
+    )
+    health_group = next(
+        group for group in endpoint_groups if "https://example.test/health" in group
+    )
+    assert 'data-endpoint-group-toggle aria-expanded="true"' in orders_group
+    assert 'data-endpoint-group-toggle aria-expanded="true"' in users_group
+    assert 'data-endpoint-group-toggle aria-expanded="false"' in health_group
+    assert "请求 3" in orders_group
+    assert "失败 1" in orders_group
+    assert "通过 2" in orders_group
+    assert "2026-06 · 通过 1" in orders_group
+    assert "2026-07 · 失败 1" in orders_group
+    assert "2026-08 · 通过 1" in orders_group
+    assert "请求 3" in users_group
+    assert "失败 3" in users_group
+    assert "2026-08 · 失败 2 / 2" in users_group
 
     overview = re.search(
         r'<section class="panel overview-panel".*?</section>',
@@ -638,8 +774,161 @@ def test_same_endpoint_requests_are_grouped_without_query_before_status(
     )
     assert overview is not None
     overview_html = overview.group(0)
+    assert overview_html.count("data-failed-overview-item") == 2
     assert overview_html.index("订单七月失败") < overview_html.index("用户六月失败")
-    assert overview_html.index("用户六月失败") < overview_html.index("用户八月失败")
+    assert overview_html.count("data-failure-target") == 3
+    assert "2026-06" in overview_html
+    assert "2026-07" in overview_html
+    assert "2026-08 ×2" in overview_html
+    assert (
+        'aria-label="查看 2026-08 对应失败请求，共 2 条"'
+        in overview_html
+    )
+
+
+def test_failure_overview_aggregates_same_endpoint_across_scripts(
+    tmp_path: Path,
+):
+    from jmeter_suite.report import generate_suite_report
+
+    run_directory = tmp_path / "cross-script-endpoint"
+    first = _execution(
+        run_directory,
+        _jtl(
+            _sample(
+                label="首脚本订单失败",
+                success=False,
+                timestamp_ms=1000,
+                url="https://example.test/orders?retry=1",
+                query="date_start=2026-06-01&amp;date_end=2026-06-30",
+            )
+        ),
+        name="首脚本",
+        artifact_name="01-首脚本",
+    )
+    second = _execution(
+        run_directory,
+        _jtl(
+            _sample(
+                label="次脚本订单失败",
+                success=False,
+                timestamp_ms=2000,
+                url="HTTPS://EXAMPLE.TEST/orders#retry",
+                query="date_start=2026-06-01&amp;date_end=2026-06-30",
+            )
+        ),
+        name="次脚本",
+        artifact_name="02-次脚本",
+    )
+
+    result = generate_suite_report(_suite(run_directory, first, second))
+    report = result.report_path.read_text(encoding="utf-8")
+    overview = re.search(
+        r'<section class="panel overview-panel".*?</section>',
+        report,
+        flags=re.DOTALL,
+    )
+    assert overview is not None
+    overview_html = overview.group(0)
+    assert overview_html.count("data-failed-overview-item") == 1
+    assert 'class="failed-count-cell"><strong>2</strong>' in overview_html
+    assert "2026-06 ×2" in overview_html
+    assert "1970-01-01 08:00:01" in overview_html
+    assert "1970-01-01 08:00:02" not in overview_html
+    assert (
+        'data-failure-target="script-01-sample-000001-card"'
+        in overview_html
+    )
+    assert report.count("data-endpoint-group id=") == 2
+
+
+def test_requests_without_urls_remain_in_independent_endpoint_groups(
+    tmp_path: Path,
+):
+    from jmeter_suite.report import generate_suite_report
+
+    run_directory = tmp_path / "missing-url-groups"
+    execution = _execution(
+        run_directory,
+        _jtl(
+            _sample(
+                label="缺失 URL 一",
+                success=False,
+                url="",
+                query="date_start=2026-06-01&amp;date_end=2026-06-30",
+            ),
+            _sample(
+                label="缺失 URL 二",
+                success=False,
+                url="",
+                query="date_start=2026-07-01&amp;date_end=2026-07-31",
+            ),
+        ),
+    )
+
+    result = generate_suite_report(_suite(run_directory, execution))
+    report = result.report_path.read_text(encoding="utf-8")
+    assert report.count("data-endpoint-group id=") == 2
+    assert report.count("<tr data-failed-overview-item>") == 2
+    assert report.count("请求 1") == 2
+    assert report.count("未记录 URL") >= 4
+
+
+def test_passed_payload_is_compressed_but_failed_payload_remains_readable(
+    tmp_path: Path,
+):
+    from jmeter_suite.report import generate_suite_report
+
+    run_directory = tmp_path / "compressed-payload"
+    passed_response = "PASSED-BEGIN\n" + ("重复响应字段-1234567890\n" * 20_000) + "PASSED-END"
+    failed_response = "FAILED-RESPONSE-REMAINS-READABLE"
+    execution = _execution(
+        run_directory,
+        _jtl(
+            _sample(
+                label="压缩通过接口",
+                query="token=passed-request-raw-value",
+                response=f"<![CDATA[{passed_response}]]>",
+            ),
+            _sample(
+                label="失败接口",
+                success=False,
+                query="token=failed-request-raw-value",
+                response=failed_response,
+            ),
+        ),
+    )
+
+    result = generate_suite_report(_suite(run_directory, execution))
+    report = result.report_path.read_text(encoding="utf-8")
+    passed_card = re.search(
+        r'<article[^>]+data-sample-id="sample-000001".*?</article>',
+        report,
+        flags=re.DOTALL,
+    )
+    failed_card = re.search(
+        r'<article[^>]+data-sample-id="sample-000002".*?</article>',
+        report,
+        flags=re.DOTALL,
+    )
+    assert passed_card is not None
+    assert failed_card is not None
+
+    passed_html = passed_card.group(0)
+    failed_html = failed_card.group(0)
+    assert "passed-request-raw-value" not in passed_html
+    assert "PASSED-BEGIN" not in passed_html
+    assert "PASSED-END" not in passed_html
+    assert _decode_compressed_payload(passed_html) == {
+        "request": "token=passed-request-raw-value",
+        "response": passed_response,
+    }
+    assert "data-compressed-payload" not in failed_html
+    assert "token=failed-request-raw-value" in html.unescape(failed_html)
+    assert failed_response in failed_html
+    assert result.report_path.stat().st_size < len(
+        passed_response.encode("utf-8")
+    ) // 2
 
 
 def test_partial_jtl_and_process_errors_stay_visible_on_the_single_page(
@@ -675,7 +964,16 @@ def test_partial_jtl_and_process_errors_stay_visible_on_the_single_page(
     assert "JTL 解析不完整" in report
     assert "以下仅展示已经完整结束的请求" in report
     assert "完整样本" in report
-    assert "partial response remains visible" in report
+    complete_card = re.search(
+        r'<article[^>]+data-sample-id="sample-000001".*?</article>',
+        report,
+        flags=re.DOTALL,
+    )
+    assert complete_card is not None
+    assert _decode_compressed_payload(complete_card.group(0))["response"] == (
+        "partial response remains visible"
+    )
+    assert "partial response remains visible" not in report
     assert "进程未正常完成" in report
     assert "JMeter exited with exit code 7" in report
 
@@ -704,17 +1002,20 @@ def test_large_response_is_complete_escaped_and_report_is_self_contained(
     result = generate_suite_report(_suite(run_directory, execution))
     report = result.report_path.read_text(encoding="utf-8")
 
-    response_match = re.search(
-        r'<pre[^>]+data-raw-response[^>]*>(.*?)</pre>',
+    sample_card = re.search(
+        r'<article[^>]+data-sample-id="sample-000001".*?</article>',
         report,
         flags=re.DOTALL,
     )
-    assert response_match is not None
-    assert html.unescape(response_match.group(1)) == response_data
-    assert "BEGIN-LARGE-RESPONSE" in report
-    assert "END-LARGE-RESPONSE" in report
+    assert sample_card is not None
+    assert _decode_compressed_payload(sample_card.group(0)) == {
+        "request": "q=<script>alert(1)</script>",
+        "response": response_data,
+    }
+    assert "BEGIN-LARGE-RESPONSE" not in report
+    assert "END-LARGE-RESPONSE" not in report
     assert "<script>alert" not in report
-    assert "&lt;/pre&gt;&lt;script&gt;alert" in report
+    assert "&lt;/pre&gt;&lt;script&gt;alert" not in report
     packaged_javascript = (
         Path(__file__).parents[1]
         / "src"
@@ -744,12 +1045,17 @@ def test_report_javascript_supports_filter_copy_and_all_details_toggle():
     )
 
     assert "data-detail-toggle" in report_js
+    assert "data-endpoint-group-toggle" in report_js
+    assert "data-all-groups-toggle" in report_js
+    assert "data-all-groups-label" in report_js
     assert "data-all-details-toggle" in report_js
     assert "data-all-details-label" in report_js
     assert "setAllDetailsExpanded" in report_js
     assert "aria-expanded" in report_js
-    assert '"展开全部"' in report_js
-    assert '"收起全部"' in report_js
+    assert '"展开全部正文"' in report_js
+    assert '"收起全部正文"' in report_js
+    assert '"展开全部接口组"' in report_js
+    assert '"收起全部接口组"' in report_js
     assert '"展开"' in report_js
     assert '"收起"' in report_js
     assert "data-sample-item" in report_js
@@ -759,20 +1065,29 @@ def test_report_javascript_supports_filter_copy_and_all_details_toggle():
     assert "queryDataRange" in report_js
     assert "periodAlwaysVisible" in report_js
     assert "applyOverviewFilters" in report_js
+    assert "filterGroupStateSnapshot" in report_js
+    assert "data-failure-target" in report_js
+    assert "scrollIntoView" in report_js
     assert "syncPeriodFilters" in report_js
     assert 'event.target.matches("[data-period-filter]")' in report_js
     assert 'item.dataset.periodAlwaysVisible === "true"' in report_js
     assert "navigator.clipboard" in report_js
-    assert 'addEventListener("beforeprint"' in report_js
-    assert 'addEventListener("afterprint"' in report_js
+    assert "DecompressionStream" in report_js
+    assert "hydrateSamplePayload" in report_js
+    assert "data-compressed-payload" in report_js
+    assert "disableUnsupportedPayloadControls" in report_js
     assert "fetch(" not in report_js
     assert "innerHTML" not in report_js
     assert ".sample-card" in report_css
+    assert ".endpoint-group" in report_css
+    assert ".endpoint-group-toggle" in report_css
+    assert ".failure-range-link" in report_css
+    assert ".payload-error" in report_css
+    assert ".compatibility-warning" in report_css
     assert ".detail-toggle" in report_css
     assert ".all-details-toggle" in report_css
     assert ".period-filter" in report_css
     assert "position: sticky" in report_css
-    assert "@media print" in report_css
 
 
 def test_report_assets_batch_bulk_details_and_defer_offscreen_rendering():
@@ -785,12 +1100,10 @@ def test_report_assets_batch_bulk_details_and_defer_offscreen_rendering():
     )
 
     assert "BULK_DETAIL_BATCH_SIZE = 20" in report_js
+    assert "BULK_GROUP_BATCH_SIZE = 20" in report_js
+    assert "MAX_PAYLOAD_CONCURRENCY = 4" in report_js
     assert "requestAnimationFrame" in report_js
     assert 'setAttribute("aria-busy", "true")' in report_js
     assert 'removeAttribute("aria-busy")' in report_js
     assert "content-visibility: auto" in report_css
     assert "contain-intrinsic-size: auto 720px" in report_css
-
-    print_styles = report_css.split("@media print", maxsplit=1)[1]
-    assert "content-visibility: visible" in print_styles
-    assert "contain-intrinsic-size: none" in print_styles

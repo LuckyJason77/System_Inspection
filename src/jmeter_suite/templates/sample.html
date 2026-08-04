@@ -1,6 +1,6 @@
 <!-- 渲染单个 HTTP 样本的概要、请求响应原文、断言和展开控件。 -->
 
-<article class="sample-card sample-card-{{ sample_status.value }}" data-sample-item data-status="{{ sample_status.value }}" data-search-text="{{ sample.label }} {{ sample.url }}" data-query-data-range="{{ query_data_range.text }}" data-period-always-visible="{{ 'false' if query_data_range.has_time_condition else 'true' }}" data-sample-id="{{ sample.sample_id }}">
+<article class="sample-card sample-card-{{ sample_status.value }}" id="{{ dom_prefix }}-card" data-sample-item data-status="{{ sample_status.value }}" data-search-text="{{ sample.label }} {{ sample.url }}" data-query-data-range="{{ query_data_range.text }}" data-period-always-visible="{{ 'false' if query_data_range.has_time_condition else 'true' }}" data-sample-id="{{ sample.sample_id }}" data-endpoint-group-id="{{ endpoint_group_id }}" data-payload-state="{{ 'pending' if compressed_payload else 'ready' }}">
   <header class="sample-card-header">
     <div class="sample-identity">
       <span class="sample-state-dot" aria-hidden="true"></span>
@@ -39,7 +39,7 @@
           <div><span class="block-index">REQ</span><h5>请求参数</h5></div>
           <button type="button" class="copy-button" data-copy-target="{{ dom_prefix }}-request">复制</button>
         </div>
-        <pre id="{{ dom_prefix }}-request" data-raw-request>{{ request_parameters or "无请求参数" }}</pre>
+        <pre id="{{ dom_prefix }}-request" data-raw-request{% if compressed_payload %} data-lazy-body="request"{% endif %}>{% if compressed_payload %}展开后加载完整请求参数{% else %}{{ request_parameters or "无请求参数" }}{% endif %}</pre>
       </section>
 
       <section class="parameter-block response-block">
@@ -47,9 +47,14 @@
           <div><span class="block-index">RES</span><h5>响应参数</h5></div>
           <button type="button" class="copy-button" data-copy-target="{{ dom_prefix }}-response">复制</button>
         </div>
-        <pre id="{{ dom_prefix }}-response" data-raw-response>{{ sample.response_data or "无响应参数" }}</pre>
+        <pre id="{{ dom_prefix }}-response" data-raw-response{% if compressed_payload %} data-lazy-body="response"{% endif %}>{% if compressed_payload %}展开后加载完整响应参数{% else %}{{ sample.response_data or "无响应参数" }}{% endif %}</pre>
       </section>
     </div>
+
+    {% if compressed_payload %}
+    <template data-compressed-payload>{{ compressed_payload }}</template>
+    <p class="payload-error" data-payload-error role="alert" hidden>正文加载失败，请重试。</p>
+    {% endif %}
 
     {% if sample.assertions %}
     <section class="assertion-block">

@@ -45,6 +45,8 @@ def test_wheel_contains_internal_package_without_startup_entrypoints(
         assert "jmeter_suite/application.py" in names
         assert "jmeter_suite/templates/base.html" in names
         assert "jmeter_suite/templates/suite.html" in names
+        assert "jmeter_suite/templates/endpoint_group.html" in names
+        assert "jmeter_suite/templates/sample.html" in names
         assert "jmeter_suite/static/report.css" in names
         assert "jmeter_suite/static/report.js" in names
         assert "jmeter_suite/cli.py" not in names

@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import base64
 from datetime import datetime, timedelta, timezone
+import gzip
 import json
 from pathlib import Path
+import re
 
 import pytest
 
@@ -21,6 +24,19 @@ REPORT_GENERATED_AT = datetime(
     tzinfo=timezone(timedelta(hours=8)),
 )
 REPORT_DIRECTORY_NAME = "2026-08-04_07-00-01_Inspection_Report"
+
+
+def _decode_compressed_payloads(report_html: str) -> list[dict[str, str]]:
+    payloads = re.findall(
+        r"<template[^>]+data-compressed-payload[^>]*>([^<]+)</template>",
+        report_html,
+    )
+    return [
+        json.loads(
+            gzip.decompress(base64.b64decode(payload.strip())).decode("utf-8")
+        )
+        for payload in payloads
+    ]
 
 
 @pytest.fixture(autouse=True)
@@ -378,10 +394,56 @@ def test_manual_report_uses_url_filter_without_validating_or_starting_jmeter(
         / "report.html"
     ).read_text(encoding="utf-8")
     assert "保留接口" in report
-    assert "kept-manual-response" in report
+    assert _decode_compressed_payloads(report) == [
+        {"request": "month=2026-06", "response": "kept-manual-response"}
+    ]
+    assert "kept-manual-response" not in report
     assert "过滤接口" not in report
     assert "filtered-manual-response" not in report
     assert "本次巡检通过" in report
+
+
+def test_manual_report_uses_configured_account_period_parameter(
+    tmp_path: Path,
+):
+    from jmeter_suite.manual_report import run_manual_report_application
+
+    project_root = _project(
+        tmp_path,
+        report_config=(
+            "\n[report]\n"
+            'additional_date_parameter_names = ["account_period"]\n'
+        ),
+    )
+    source = _write_run(project_root, "2026-08-04_08-00")
+    jtl_path = source / "artifacts" / "01-script-1" / "result.jtl"
+    jtl_path.write_text(
+        """\
+<testResults>
+  <httpSample lb="账期查询" s="true" rc="200" ts="1785801600000" t="25">
+    <java.net.URL>https://example.test/accounts</java.net.URL>
+    <queryString>account_period=2026-08&amp;page=1</queryString>
+    <responseData>{"ok":true}</responseData>
+  </httpSample>
+</testResults>
+""",
+        encoding="utf-8",
+    )
+
+    code = run_manual_report_application(
+        project_root,
+        input_reader=lambda prompt: "",
+    )
+
+    assert code == 0
+    report = (
+        project_root
+        / "manual_reports"
+        / REPORT_DIRECTORY_NAME
+        / "report.html"
+    ).read_text(encoding="utf-8")
+    assert "查询数据范围：2026-08" in report
+    assert "未携带时间条件" not in report
 
 
 def test_manual_report_rejects_invalid_url_filter_config(
@@ -403,5 +465,28 @@ def test_manual_report_rejects_invalid_url_filter_config(
 
     assert code == 2
     assert "report.excluded_url_keywords 必须是字符串数组" in (
+        capsys.readouterr().err
+    )
+
+
+def test_manual_report_rejects_invalid_date_parameter_config(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+):
+    from jmeter_suite.manual_report import run_manual_report_application
+
+    project_root = _project(
+        tmp_path,
+        report_config=(
+            "\n[report]\n"
+            'additional_date_parameter_names = "account_period"\n'
+        ),
+    )
+    _write_run(project_root, "2026-08-04_08-00")
+
+    code = run_manual_report_application(project_root)
+
+    assert code == 2
+    assert "report.additional_date_parameter_names 必须是字符串数组" in (
         capsys.readouterr().err
     )

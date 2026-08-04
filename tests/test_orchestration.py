@@ -107,7 +107,12 @@ def test_execute_suite_once_holds_the_lock_through_report_generation(
 
     real_reporter = orchestration.generate_suite_report
 
-    def checking_reporter(process_result, *, excluded_url_keywords=()):
+    def checking_reporter(
+        process_result,
+        *,
+        excluded_url_keywords=(),
+        additional_date_parameter_names=(),
+    ):
         competing = locking.FileLock(
             config.runner.output_root / ".runtime" / "suite.lock"
         )
@@ -116,6 +121,9 @@ def test_execute_suite_once_holds_the_lock_through_report_generation(
         return real_reporter(
             process_result,
             excluded_url_keywords=excluded_url_keywords,
+            additional_date_parameter_names=(
+                additional_date_parameter_names
+            ),
         )
 
     monkeypatch.setattr(
@@ -221,7 +229,10 @@ def test_execute_suite_once_passes_report_filter_config_to_reporter(
     orchestration = importlib.import_module("jmeter_suite.orchestration")
     config = replace(
         _make_config(tmp_path),
-        report=ReportConfig(excluded_url_keywords=("/health",)),
+        report=ReportConfig(
+            excluded_url_keywords=("/health",),
+            additional_date_parameter_names=("account_period",),
+        ),
     )
     process_result = _successful_process_result(config)
     observed: dict[str, object] = {}
@@ -236,9 +247,13 @@ def test_execute_suite_once_passes_report_filter_config_to_reporter(
         actual_result,
         *,
         excluded_url_keywords: tuple[str, ...],
+        additional_date_parameter_names: tuple[str, ...],
     ):
         observed["process_result"] = actual_result
         observed["excluded_url_keywords"] = excluded_url_keywords
+        observed["additional_date_parameter_names"] = (
+            additional_date_parameter_names
+        )
         raise RuntimeError("captured")
 
     monkeypatch.setattr(
@@ -253,6 +268,7 @@ def test_execute_suite_once_passes_report_filter_config_to_reporter(
     assert observed == {
         "process_result": process_result,
         "excluded_url_keywords": ("/health",),
+        "additional_date_parameter_names": ("account_period",),
     }
 
 

@@ -2,13 +2,29 @@
 
 from __future__ import annotations
 
+import base64
 from datetime import datetime, timezone
+import gzip
 import json
 from pathlib import Path
+import re
 
 
 STARTED_AT = datetime(2026, 8, 4, 0, 0, tzinfo=timezone.utc)
 FINISHED_AT = datetime(2026, 8, 4, 0, 1, tzinfo=timezone.utc)
+
+
+def _decode_compressed_payloads(report_html: str) -> list[dict[str, str]]:
+    payloads = re.findall(
+        r"<template[^>]+data-compressed-payload[^>]*>([^<]+)</template>",
+        report_html,
+    )
+    return [
+        json.loads(
+            gzip.decompress(base64.b64decode(payload.strip())).decode("utf-8")
+        )
+        for payload in payloads
+    ]
 
 
 def _sample(
@@ -128,7 +144,13 @@ def test_filtered_failure_is_removed_from_html_stats_assertions_and_manifest(
     assert parsed.assertion_failures == 0
     report = result.report_path.read_text(encoding="utf-8")
     assert "应保留接口" in report
-    assert "kept-response" in report
+    assert _decode_compressed_payloads(report) == [
+        {
+            "request": "date_start=2026-06-01&date_end=2026-06-30",
+            "response": "kept-response",
+        }
+    ]
+    assert "kept-response" not in report
     assert "应过滤登录接口" not in report
     assert "filtered-secret-response" not in report
     assert "不应计入的断言" not in report

@@ -97,7 +97,10 @@ def test_example_config_uses_the_public_layout_and_replaces_legacy_assets():
         "directory": "../jmx",
         "timeout_seconds": 3600,
     }
-    assert example["report"] == {"excluded_url_keywords": []}
+    assert example["report"] == {
+        "excluded_url_keywords": [],
+        "additional_date_parameter_names": ["account_period"],
+    }
     assert not (PROJECT_ROOT / "config.example.toml").exists()
     assert not (PROJECT_ROOT / "config" / "jmeter-save.properties").exists()
 
@@ -165,6 +168,27 @@ excluded_url_keywords = [" /health ", "/LOGIN/login/singlelogin"]
     )
 
 
+def test_load_config_accepts_additional_date_parameter_names(tmp_path: Path):
+    config_dir = tmp_path / "report-date-parameters"
+    _create_required_fixture_files(config_dir)
+    config_path = _write_config(
+        config_dir,
+        VALID_CONFIG_TOML
+        + """
+
+[report]
+additional_date_parameter_names = [" account_period ", "Billing-Month"]
+""",
+    )
+
+    config = load_config(config_path)
+
+    assert config.report.additional_date_parameter_names == (
+        "account_period",
+        "billing-month",
+    )
+
+
 @pytest.mark.parametrize(
     ("report_block", "expected_error"),
     [
@@ -183,6 +207,18 @@ excluded_url_keywords = [" /health ", "/LOGIN/login/singlelogin"]
         (
             '[report]\nexcluded_url_keywords = []\nunknown = true',
             "report 包含未知键: unknown",
+        ),
+        (
+            '[report]\nadditional_date_parameter_names = "account_period"',
+            "report.additional_date_parameter_names 必须是字符串数组",
+        ),
+        (
+            "[report]\nadditional_date_parameter_names = [123]",
+            "report.additional_date_parameter_names[1] 必须是非空字符串",
+        ),
+        (
+            '[report]\nadditional_date_parameter_names = ["account_period", "ACCOUNT_PERIOD"]',
+            "report.additional_date_parameter_names[2] 与前项重复",
         ),
     ],
 )

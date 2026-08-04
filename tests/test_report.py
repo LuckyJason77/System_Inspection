@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 from datetime import datetime, timedelta, timezone
+import gzip
 import hashlib
 import html
 from importlib import resources
@@ -32,6 +33,19 @@ REPORT_GENERATED_AT = datetime(
     1,
     tzinfo=timezone(timedelta(hours=8)),
 )
+
+
+def _decode_compressed_payloads(report_html: str) -> list[dict[str, str]]:
+    payloads = re.findall(
+        r"<template[^>]+data-compressed-payload[^>]*>([^<]+)</template>",
+        report_html,
+    )
+    return [
+        json.loads(
+            gzip.decompress(base64.b64decode(payload.strip())).decode("utf-8")
+        )
+        for payload in payloads
+    ]
 
 
 def _execution(
@@ -216,6 +230,14 @@ def test_generate_passed_report_writes_single_offline_page_and_manifest(
     assert ">展开<" in suite_html
     assert "完整响应" in suite_html
     assert 'data-raw-response' in suite_html
+    assert 'data-lazy-body="response"' in suite_html
+    assert 'data-compressed-payload' in suite_html
+    assert _decode_compressed_payloads(suite_html) == [
+        {
+            "request": "username=张三&token=secret-query",
+            "response": "第一行\n完整响应\n最后一行",
+        }
+    ]
     assert "navigator.clipboard" in report_js
     assert "execCommand" in report_js
     assert "fetch(" not in report_js
@@ -281,7 +303,7 @@ def test_generate_passed_report_writes_single_offline_page_and_manifest(
     assert "完整响应" not in manifest_text
     assert "不应进入报告的标准输出" not in manifest_text
     assert "不应进入报告的标准错误" not in manifest_text
-    assert "secret-query" in suite_html
+    assert "username=张三&amp;token=secret-query" not in suite_html
     assert "secret-header" not in suite_html
     assert "secret-request-body" not in suite_html
 
@@ -453,7 +475,10 @@ def test_report_ignores_logical_controller_samples_and_counts_only_http_interfac
     assert len(re.findall(r"<article\b[^>]*\bdata-sample-item\b", report)) == 1
     assert "真实 HTTP 接口" in report
     assert "未记录 URL" in report
-    assert "api-response" in report
+    assert _decode_compressed_payloads(report) == [
+        {"request": "", "response": "api-response"}
+    ]
+    assert "api-response" not in report
     assert "AMAZON 逻辑控制器" not in report
     assert "controller-only-response" not in report
     assert "controller-only-failure" not in report
@@ -645,7 +670,14 @@ def test_timeout_and_cancelled_status_override_partial_jtl_and_keep_details(
         script_html = script.report_path.read_text(encoding="utf-8")
         assert "JTL 解析不完整" in script_html
         assert "已完成部分" in script_html
-        assert "partial response remains visible" in script_html
+        assert "partial response remains visible" not in script_html
+    assert [
+        payload["response"]
+        for payload in _decode_compressed_payloads(script_html)
+    ] == [
+        "partial response remains visible",
+        "partial response remains visible",
+    ]
     suite_html = result.report_path.read_text(encoding="utf-8")
     assert "超时" in suite_html
     assert "已取消" in suite_html
@@ -691,7 +723,10 @@ def test_completed_malformed_jtl_is_error_with_partial_warning_and_detail(
     assert "JTL 解析不完整" in script_html
     assert "以下仅展示已经完整结束的请求" in script_html
     assert "已完成" in script_html
-    assert "完整样本" in script_html
+    assert _decode_compressed_payloads(script_html) == [
+        {"request": "", "response": "完整样本"}
+    ]
+    assert "完整样本" not in script_html
     manifest = json.loads(result.manifest_path.read_text(encoding="utf-8"))
     assert manifest["totals"]["error"] == 1
     assert manifest["totals"]["failed"] == 0
@@ -787,17 +822,16 @@ def test_html_is_csp_safe_escapes_injection_and_preserves_large_response(
 
     assert result.status is ReportStatus.PASSED
     sample_html = result.report_path.read_text(encoding="utf-8")
-    response_match = re.search(
-        r'<pre[^>]+data-raw-response[^>]*>(.*?)</pre>',
-        sample_html,
-        flags=re.DOTALL,
-    )
-    assert response_match is not None
-    assert html.unescape(response_match.group(1)) == response_data
-    assert "BEGIN-LARGE-RESPONSE" in sample_html
-    assert "END-LARGE-RESPONSE" in sample_html
+    assert _decode_compressed_payloads(sample_html) == [
+        {
+            "request": '</pre><script>alert("query")</script>',
+            "response": response_data,
+        }
+    ]
+    assert "BEGIN-LARGE-RESPONSE" not in sample_html
+    assert "END-LARGE-RESPONSE" not in sample_html
     assert "<script>alert" not in sample_html
-    assert "&lt;/pre&gt;&lt;script&gt;alert" in sample_html
+    assert "&lt;/pre&gt;&lt;script&gt;alert" not in sample_html
     heading_match = re.search(r"<h4>(.*?)</h4>", sample_html)
     assert heading_match is not None
     assert html.unescape(heading_match.group(1)) == injected_label
@@ -856,6 +890,7 @@ def test_html_is_csp_safe_escapes_injection_and_preserves_large_response(
         "base.html",
         "suite.html",
         "script.html",
+        "endpoint_group.html",
         "sample.html",
     ):
         source = package_root.joinpath(
@@ -1016,6 +1051,7 @@ def test_packaged_templates_and_static_assets_are_resource_accessible():
         "templates/base.html",
         "templates/suite.html",
         "templates/script.html",
+        "templates/endpoint_group.html",
         "templates/sample.html",
         "static/report.css",
         "static/report.js",
@@ -1033,9 +1069,6 @@ def test_packaged_templates_and_static_assets_are_resource_accessible():
     )
     assert "data-sample-search" in report_js
     assert "data-visible-count" in report_js
-    assert 'addEventListener("beforeprint"' in report_js
-    assert 'addEventListener("afterprint"' in report_js
-    assert "@media print" in report_css
     assert "position: sticky" in report_css
     assert ":focus-visible" in report_css
 

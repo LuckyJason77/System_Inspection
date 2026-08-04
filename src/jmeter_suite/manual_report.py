@@ -24,6 +24,10 @@ from .report_filter import (
     ReportFilterConfigError,
     parse_excluded_url_keywords,
 )
+from .request_period import (
+    DateParameterConfigError,
+    parse_additional_date_parameter_names,
+)
 
 
 class ManualReportError(RuntimeError):
@@ -53,6 +57,7 @@ class ManualSourceRun:
 class ManualReportSettings:
     runs_root: Path
     excluded_url_keywords: tuple[str, ...]
+    additional_date_parameter_names: tuple[str, ...]
 
 
 def _datetime(value: object, field: str) -> datetime:
@@ -206,7 +211,10 @@ def _configured_settings(project_root: Path) -> ManualReportSettings:
         report = {}
     if not isinstance(report, dict):
         raise ManualReportError("report 必须是配置块")
-    unknown_keys = sorted(set(report) - {"excluded_url_keywords"})
+    unknown_keys = sorted(
+        set(report)
+        - {"excluded_url_keywords", "additional_date_parameter_names"}
+    )
     if unknown_keys:
         raise ManualReportError(f"report 包含未知键: {unknown_keys[0]}")
     try:
@@ -215,10 +223,19 @@ def _configured_settings(project_root: Path) -> ManualReportSettings:
         )
     except ReportFilterConfigError as error:
         raise ManualReportError(str(error)) from error
+    try:
+        additional_date_parameter_names = (
+            parse_additional_date_parameter_names(
+                report.get("additional_date_parameter_names")
+            )
+        )
+    except DateParameterConfigError as error:
+        raise ManualReportError(str(error)) from error
 
     return ManualReportSettings(
         runs_root=configured.resolve(strict=False),
         excluded_url_keywords=excluded_url_keywords,
+        additional_date_parameter_names=additional_date_parameter_names,
     )
 
 
@@ -336,6 +353,7 @@ def generate_manual_report(
     source: ManualSourceRun,
     *,
     excluded_url_keywords: tuple[str, ...] = (),
+    additional_date_parameter_names: tuple[str, ...] = (),
 ) -> Path:
     manual_root = project_root / "manual_reports"
     manual_root.mkdir(parents=True, exist_ok=True)
@@ -347,6 +365,9 @@ def generate_manual_report(
         html_result = generate_suite_html_report(
             source.suite_for(staging),
             excluded_url_keywords=excluded_url_keywords,
+            additional_date_parameter_names=(
+                additional_date_parameter_names
+            ),
         )
         return _publish_report(
             html_result.report_path,
@@ -370,6 +391,9 @@ def run_manual_report_application(
             project_root,
             source,
             excluded_url_keywords=settings.excluded_url_keywords,
+            additional_date_parameter_names=(
+                settings.additional_date_parameter_names
+            ),
         )
         print(f"来源: {source.directory}")
         print(f"原巡检状态: {status_label(source.status)}")

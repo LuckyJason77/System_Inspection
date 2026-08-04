@@ -48,6 +48,9 @@ def execute_suite_once(
             excluded_url_keywords=(
                 config.report.excluded_url_keywords
             ),
+            additional_date_parameter_names=(
+                config.report.additional_date_parameter_names
+            ),
         )
     finally:
         lock.release()

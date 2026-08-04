@@ -26,6 +26,10 @@ from .report_filter import (
     ReportFilterConfigError,
     parse_excluded_url_keywords,
 )
+from .request_period import (
+    DateParameterConfigError,
+    parse_additional_date_parameter_names,
+)
 from .runner import ProcessTreeTerminationResult, terminate_process_tree
 
 
@@ -47,7 +51,9 @@ _JMETER_KEYS = frozenset({"executable", "properties_file"})
 _SCRIPTS_KEYS = frozenset({"directory", "timeout_seconds"})
 _SCHEDULE_KEYS = frozenset({"timezone", "cron"})
 _OUTPUT_KEYS = frozenset({"directory"})
-_REPORT_KEYS = frozenset({"excluded_url_keywords"})
+_REPORT_KEYS = frozenset(
+    {"excluded_url_keywords", "additional_date_parameter_names"}
+)
 _CMD_UNSAFE_PATH_CHARACTERS = frozenset("&%^!|<>()\r\n")
 
 
@@ -322,6 +328,15 @@ def load_config(path: str | Path) -> AppConfig:
     except ReportFilterConfigError as error:
         errors.append(str(error))
         excluded_url_keywords = ()
+    try:
+        additional_date_parameter_names = (
+            parse_additional_date_parameter_names(
+                report_raw.get("additional_date_parameter_names")
+            )
+        )
+    except DateParameterConfigError as error:
+        errors.append(str(error))
+        additional_date_parameter_names = ()
 
     base_directory = config_path.parent
     executable_value = _get_required_string(
@@ -452,6 +467,9 @@ def load_config(path: str | Path) -> AppConfig:
         scripts=scripts,
         report=ReportConfig(
             excluded_url_keywords=excluded_url_keywords,
+            additional_date_parameter_names=(
+                additional_date_parameter_names
+            ),
         ),
     )
 

@@ -25,6 +25,10 @@ _IGNORED_FIELDS = {
 }
 
 
+class DateParameterConfigError(ValueError):
+    """报告日期参数名配置无效。"""
+
+
 @dataclass(frozen=True, slots=True)
 class QueryDataRange:
     text: str
@@ -52,6 +56,38 @@ class _DateValue:
 
 def _normalized_field(name: str) -> str:
     return re.sub(r"[^a-z0-9]+", "_", name.casefold()).strip("_")
+
+
+def _configured_parameter_name(name: str) -> str:
+    return name.strip().casefold()
+
+
+def parse_additional_date_parameter_names(raw: object) -> tuple[str, ...]:
+    """校验并规范化由配置补充的日期参数名。"""
+    if raw is None:
+        return ()
+    if not isinstance(raw, list):
+        raise DateParameterConfigError(
+            "report.additional_date_parameter_names 必须是字符串数组"
+        )
+
+    result: list[str] = []
+    seen: set[str] = set()
+    for index, value in enumerate(raw, start=1):
+        if not isinstance(value, str) or not value.strip():
+            raise DateParameterConfigError(
+                "report.additional_date_parameter_names"
+                f"[{index}] 必须是非空字符串"
+            )
+        normalized = _configured_parameter_name(value)
+        if normalized in seen:
+            raise DateParameterConfigError(
+                "report.additional_date_parameter_names"
+                f"[{index}] 与前项重复: {value.strip()}"
+            )
+        seen.add(normalized)
+        result.append(normalized)
+    return tuple(result)
 
 
 def _is_period_field(name: str) -> bool:
@@ -136,11 +172,24 @@ def _with_warning(text: str, invalid: bool) -> QueryDataRange:
     return QueryDataRange(text)
 
 
-def analyze_query_data_range(raw_parameters: str) -> QueryDataRange:
+def analyze_query_data_range(
+    raw_parameters: str,
+    *,
+    additional_date_parameter_names: tuple[str, ...] = (),
+) -> QueryDataRange:
+    configured_names = {
+        _configured_parameter_name(name)
+        for name in additional_date_parameter_names
+        if _configured_parameter_name(name)
+    }
     candidates: list[tuple[str, str]] = []
     for name, value in _parameters(raw_parameters):
-        if _is_period_field(name):
-            candidates.append((_normalized_field(name), value))
+        normalized_name = _normalized_field(name)
+        if (
+            _is_period_field(name)
+            or _configured_parameter_name(name) in configured_names
+        ):
+            candidates.append((normalized_name, value))
 
     if not candidates:
         return QueryDataRange(

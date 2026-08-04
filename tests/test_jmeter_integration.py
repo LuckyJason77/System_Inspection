@@ -1,6 +1,8 @@
 """使用真实 JMeter 与本地 HTTP 服务验证串行执行和离线报告全链路。"""
 
+import base64
 from collections.abc import Iterator
+import gzip
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import os
@@ -19,6 +21,19 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 PASS_REQUEST = "通过链路完整中文请求正文-永久保留"
 FAIL_REQUEST = "失败链路完整中文请求正文-永久保留"
 RESPONSE_PREFIX = "服务端完整中文响应"
+
+
+def _decode_compressed_payloads(report_html: str) -> list[dict[str, str]]:
+    payloads = re.findall(
+        r"<template[^>]+data-compressed-payload[^>]*>([^<]+)</template>",
+        report_html,
+    )
+    return [
+        json.loads(
+            gzip.decompress(base64.b64decode(payload.strip())).decode("utf-8")
+        )
+        for payload in payloads
+    ]
 
 
 @pytest.fixture(scope="session")
@@ -309,11 +324,14 @@ def test_real_jmeter_runs_serially_and_generates_raw_offline_reports(
         failed_run,
         failed_manifest["scripts"][0],
     )
-    assert f'data-raw-request>{PASS_REQUEST}</pre>' in passing_html
-    assert (
-        f'data-raw-response>{RESPONSE_PREFIX}-pass-{PASS_REQUEST}</pre>'
-        in passing_html
-    )
+    assert _decode_compressed_payloads(passing_html) == [
+        {
+            "request": PASS_REQUEST,
+            "response": f"{RESPONSE_PREFIX}-pass-{PASS_REQUEST}",
+        }
+    ]
+    assert PASS_REQUEST not in passing_html
+    assert f"{RESPONSE_PREFIX}-pass-{PASS_REQUEST}" not in passing_html
     assert "pass-header-secret" not in passing_html
     assert f'data-raw-request>{FAIL_REQUEST}</pre>' in failing_html
     assert (

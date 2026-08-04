@@ -243,6 +243,7 @@ class ScriptConfig:
 @dataclass(frozen=True, slots=True)
 class ReportConfig:
     excluded_url_keywords: tuple[str, ...] = ()
+    additional_date_parameter_names: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

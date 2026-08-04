@@ -1,4 +1,4 @@
-/* 定义离线巡检报告的布局、状态样式、响应式展示和打印规则。 */
+/* 定义离线巡检报告的布局、状态样式和响应式展示规则。 */
 
 :root {
   color-scheme: light;
@@ -281,6 +281,17 @@ button {
   padding: 22px 24px 24px;
 }
 
+.compatibility-warning {
+  margin-top: 16px;
+  padding: 13px 15px;
+  border: 1px solid #f0d49a;
+  border-radius: var(--radius-sm);
+  color: #795815;
+  background: var(--warning-soft);
+  font-size: 13px;
+  font-weight: 650;
+}
+
 .section-heading,
 .details-heading,
 .block-heading {
@@ -398,6 +409,14 @@ tbody tr[data-status="cancelled"] td {
   flex-wrap: wrap;
 }
 
+.failure-overview-hint {
+  max-width: 760px;
+  margin: 7px 0 0;
+  color: var(--text-soft);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
 .failure-overview-summary span {
   padding: 6px 10px;
   border: 1px solid #efc5c8;
@@ -438,6 +457,54 @@ tbody tr[data-status="cancelled"] td {
   white-space: nowrap;
 }
 
+.failed-count-cell {
+  width: 96px;
+  color: #9d2929;
+  text-align: center;
+}
+
+.failure-range-heading {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  flex-wrap: wrap;
+}
+
+.failure-range-tip {
+  padding: 2px 7px;
+  border-radius: 999px;
+  color: var(--primary-dark);
+  background: var(--primary-soft);
+  font-size: 10px;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.failure-range-links {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-wrap: wrap;
+}
+
+.failure-range-link {
+  min-height: 30px;
+  padding: 5px 9px;
+  border: 1px solid #efc5c8;
+  border-radius: 999px;
+  cursor: pointer;
+  color: #9d2929;
+  background: #fff7f7;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.failure-range-link:hover,
+.failure-range-link:focus-visible {
+  border-color: var(--danger);
+  background: var(--danger-soft);
+}
+
 .overview-empty {
   margin: 0;
   padding: 17px 18px;
@@ -471,6 +538,14 @@ tbody tr[data-status="cancelled"] td {
 
 .details-heading > div > p:last-child {
   margin-top: 5px;
+}
+
+.details-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 
 .sample-toolbar {
@@ -579,6 +654,23 @@ tbody tr[data-status="cancelled"] td {
   color: var(--text);
 }
 
+.report-operation-status {
+  margin: -6px 0 14px;
+  padding: 9px 12px;
+  border: 1px solid #b9d3ef;
+  border-radius: var(--radius-sm);
+  color: var(--primary-dark);
+  background: var(--primary-soft);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.report-operation-status.operation-status-error {
+  border-color: #efc5c8;
+  color: #9d2929;
+  background: var(--danger-soft);
+}
+
 .script-section {
   margin: 0;
 }
@@ -612,6 +704,115 @@ tbody tr[data-status="cancelled"] td {
   background: transparent;
 }
 
+.endpoint-group {
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+}
+
+.endpoint-group-failed {
+  border-color: #efc5c8;
+}
+
+.endpoint-group-toggle {
+  display: grid;
+  width: 100%;
+  grid-template-columns: minmax(220px, 1.2fr) auto minmax(180px, 1fr) auto;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 16px;
+  border: 0;
+  cursor: pointer;
+  color: var(--text);
+  background: var(--surface);
+  text-align: left;
+}
+
+.endpoint-group-toggle:hover {
+  background: #fbfdff;
+}
+
+.endpoint-group-failed .endpoint-group-toggle {
+  background: #fffafa;
+}
+
+.endpoint-group-identity,
+.endpoint-group-identity > strong,
+.endpoint-group-identity > small {
+  display: block;
+  min-width: 0;
+}
+
+.endpoint-group-identity > strong {
+  font-size: 14px;
+}
+
+.endpoint-group-identity > small {
+  margin-top: 4px;
+  overflow: hidden;
+  color: var(--text-faint);
+  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.endpoint-group-counts,
+.endpoint-range-list {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.endpoint-group-counts > span,
+.endpoint-range-badge {
+  padding: 4px 7px;
+  border-radius: 999px;
+  background: var(--neutral-soft);
+  color: var(--text-soft);
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.endpoint-group-failed-count,
+.endpoint-range-failed {
+  color: #9d2929 !important;
+  background: var(--danger-soft) !important;
+}
+
+.endpoint-group-passed-count,
+.endpoint-range-passed {
+  color: #17652a !important;
+  background: var(--success-soft) !important;
+}
+
+.endpoint-group-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  color: var(--primary-dark);
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.endpoint-group-toggle[aria-expanded="true"] .toggle-chevron {
+  transform: translateY(2px) rotate(225deg);
+}
+
+.endpoint-group-panel {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border-top: 1px solid var(--border);
+  background: var(--surface-soft);
+}
+
 .script-section + .script-section .sample-list {
   margin-top: 12px;
 }
@@ -630,6 +831,11 @@ tbody tr[data-status="cancelled"] td {
   border-color: #cbd5e2;
   box-shadow: 0 8px 20px rgba(23, 32, 51, 0.07);
   transform: translateY(-1px);
+}
+
+.sample-card-highlight {
+  border-color: var(--primary) !important;
+  box-shadow: 0 0 0 4px rgba(32, 107, 196, 0.17), var(--shadow-md) !important;
 }
 
 .sample-card-passed {
@@ -745,6 +951,7 @@ tbody tr[data-status="cancelled"] td {
 }
 
 .detail-toggle,
+.all-groups-toggle,
 .all-details-toggle,
 .copy-button {
   display: inline-flex;
@@ -773,14 +980,28 @@ tbody tr[data-status="cancelled"] td {
   padding: 0 16px;
 }
 
+.all-groups-toggle {
+  min-width: 118px;
+  height: 38px;
+  padding: 0 14px;
+}
+
+.detail-toggle:disabled,
+.all-groups-toggle:disabled,
 .all-details-toggle:disabled {
   cursor: not-allowed;
   opacity: 0.55;
 }
 
-.detail-toggle:hover,
+.copy-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.detail-toggle:not(:disabled):hover,
+.all-groups-toggle:not(:disabled):hover,
 .all-details-toggle:not(:disabled):hover,
-.copy-button:hover {
+.copy-button:not(:disabled):hover {
   color: var(--primary-dark);
   border-color: #9fbfe4;
   background: var(--primary-soft);
@@ -899,6 +1120,17 @@ pre {
   margin-top: 12px;
 }
 
+.payload-error {
+  margin: 12px 0 0;
+  padding: 10px 12px;
+  border: 1px solid #efc5c8;
+  border-radius: var(--radius-sm);
+  color: #9d2929;
+  background: var(--danger-soft);
+  font-size: 12px;
+  font-weight: 650;
+}
+
 .assertion-count {
   color: var(--text-faint);
   font-size: 12px;
@@ -1009,6 +1241,23 @@ summary:focus-visible {
     flex-direction: column;
   }
 
+  .details-heading {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .details-actions {
+    justify-content: flex-start;
+  }
+
+  .endpoint-group-toggle {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .endpoint-range-list {
+    grid-column: 1 / -1;
+  }
+
   .period-filter-field {
     width: 100%;
     justify-content: space-between;
@@ -1076,6 +1325,23 @@ summary:focus-visible {
     padding: 10px;
   }
 
+  .endpoint-group-toggle {
+    grid-template-columns: 1fr;
+  }
+
+  .endpoint-group-action {
+    justify-content: flex-start;
+  }
+
+  .details-actions {
+    width: 100%;
+  }
+
+  .all-groups-toggle,
+  .all-details-toggle {
+    width: 100%;
+  }
+
   .sample-result .metric {
     min-width: 50px;
   }
@@ -1083,56 +1349,5 @@ summary:focus-visible {
   .detail-toggle {
     width: 100%;
     margin: 2px 0 0;
-  }
-}
-
-@media print {
-  :root {
-    --bg: #ffffff;
-  }
-
-  body {
-    background: #ffffff;
-    print-color-adjust: exact;
-  }
-
-  .report-shell {
-    width: 100%;
-    padding: 0;
-  }
-
-  .hero,
-  .panel,
-  .script-section,
-  .sample-card {
-    box-shadow: none;
-  }
-
-  .sample-toolbar,
-  .period-filter-field,
-  .copy-button,
-  .all-details-toggle,
-  .detail-toggle {
-    display: none !important;
-  }
-
-  .sample-detail[hidden] {
-    display: block !important;
-  }
-
-  .sample-detail {
-    content-visibility: visible;
-    contain-intrinsic-size: none;
-  }
-
-  .sample-card,
-  .parameter-block,
-  .assertion-block {
-    break-inside: avoid;
-  }
-
-  pre {
-    max-height: none;
-    overflow: visible;
   }
 }

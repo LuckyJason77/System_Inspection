@@ -19,3 +19,5 @@ directory = "../runs"
 # URL 会先移除 Query 和 fragment，再按以下关键字做不区分大小写的包含匹配。
 # 命中的接口不会显示、统计，也不会影响巡检结论。
 excluded_url_keywords = []
+# 补充程序内置规则未覆盖的日期参数名，按名称精确匹配（不区分大小写）。
+additional_date_parameter_names = ["account_period"]

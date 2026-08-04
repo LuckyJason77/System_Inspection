@@ -27,6 +27,10 @@
       <span class="status-badge status-badge-large status-{{ status.value }}">{{ status|status_label }}</span>
     </header>
 
+    <aside class="compatibility-warning" data-decompression-warning role="alert" hidden>
+      当前浏览器不支持离线正文解压。失败正文仍可查看；请使用新版 Edge 或 Chrome 查看通过请求正文。
+    </aside>
+
     <section class="summary-grid" aria-label="巡检汇总">
       <article class="summary-card" data-summary-card="requests">
         <span>请求总数</span>
@@ -55,6 +59,9 @@
         <div>
           <p class="section-kicker">执行概览</p>
           <h2>失败接口概览</h2>
+          {% if failed_endpoints %}
+          <p class="failure-overview-hint">请求执行失败，或任一断言未通过（例如返回数据为空、关键字段缺失）时，会判定为失败。</p>
+          {% endif %}
         </div>
         <label class="period-filter-field">
           <span>查询数据范围</span>
@@ -66,31 +73,44 @@
           </select>
         </label>
       </div>
-      {% if failed_samples %}
+      {% if failed_endpoints %}
       <div class="failure-overview-summary" aria-label="失败接口汇总">
         <span>失败 {{ totals.failed_samples }} / {{ totals.leaf_samples }}</span>
         <span>失败率 {{ failure_rate }}</span>
         <span>失败断言 {{ assertion_failures }}</span>
-        <span>当前显示 <strong data-overview-visible-count>{{ failed_samples|length }}</strong> / {{ failed_samples|length }}</span>
+        <span>当前显示 <strong data-overview-visible-count>{{ failed_endpoints|length }}</strong> / {{ failed_endpoints|length }}</span>
       </div>
       <div class="table-scroll" data-overview-table>
         <table class="failure-overview-table">
           <thead>
             <tr>
-              <th scope="col">请求时间</th>
               <th scope="col">接口</th>
-              <th scope="col">查询数据范围</th>
+              <th scope="col">失败次数</th>
+              <th scope="col">
+                <span class="failure-range-heading">
+                  <span>失败数据范围</span>
+                  <small class="failure-range-tip">点击可定位请求</small>
+                </span>
+              </th>
+              <th scope="col">请求时间</th>
             </tr>
           </thead>
           <tbody>
-          {% for sample in failed_samples %}
-            <tr data-failed-overview-item data-query-data-range="{{ sample.query_data_range.text }}" data-period-always-visible="{{ 'false' if sample.query_data_range.has_time_condition else 'true' }}">
-              <td><strong class="failed-request-time">{{ sample.timestamp_ms|sample_time }}</strong></td>
+          {% for endpoint in failed_endpoints %}
+            <tr data-failed-overview-item>
               <td class="failed-interface-cell">
-                <strong>{{ sample.label or "未命名请求" }}</strong>
-                <small>{{ sample.url or "未记录 URL" }}</small>
+                <strong>{{ endpoint.label }}</strong>
+                <small>{{ endpoint.url }}</small>
               </td>
-              <td class="query-data-range-cell{% if sample.query_data_range.invalid %} query-data-range-warning{% endif %}"><strong>{{ sample.query_data_range.text }}</strong></td>
+              <td class="failed-count-cell"><strong>{{ endpoint.failure_count }}</strong></td>
+              <td class="failure-range-cell">
+                <div class="failure-range-links">
+                {% for range in endpoint.ranges %}
+                  <button type="button" class="failure-range-link" data-failure-target="{{ range.target_id }}" data-query-data-range="{{ range.text }}" data-period-always-visible="{{ 'true' if range.always_visible else 'false' }}" aria-label="查看 {{ range.text }} 对应失败请求{% if range.count > 1 %}，共 {{ range.count }} 条{% endif %}">{{ range.text }}{% if range.count > 1 %} ×{{ range.count }}{% endif %}</button>
+                {% endfor %}
+                </div>
+              </td>
+              <td><strong class="failed-request-time">{{ endpoint.timestamp_ms|sample_time }}</strong></td>
             </tr>
           {% endfor %}
           </tbody>
@@ -111,9 +131,14 @@
           <h2 id="request-details-title">请求明细</h2>
           <p>相同接口集中展示，组内失败请求优先；失败默认展开，通过默认收起。</p>
         </div>
-        <button type="button" class="all-details-toggle" data-all-details-toggle aria-controls="request-details-content"{% if detail_count == 0 %} disabled{% endif %}>
-          <span data-all-details-label>{{ "收起全部" if failed_samples else "展开全部" }}</span>
-        </button>
+        <div class="details-actions">
+          <button type="button" class="all-groups-toggle" data-all-groups-toggle aria-controls="request-details-content"{% if detail_count == 0 %} disabled{% endif %}>
+            <span data-all-groups-label>{{ "收起全部接口组" if failed_endpoints else "展开全部接口组" }}</span>
+          </button>
+          <button type="button" class="all-details-toggle" data-all-details-toggle aria-controls="request-details-content"{% if detail_count == 0 %} disabled{% endif %}>
+            <span data-all-details-label>{{ "收起全部正文" if failed_endpoints else "展开全部正文" }}</span>
+          </button>
+        </div>
       </div>
 
       <div class="sample-toolbar">
@@ -138,6 +163,7 @@
         </div>
         <p class="match-count" aria-live="polite">显示 <strong data-visible-count>{{ detail_count }}</strong> / {{ detail_count }}</p>
       </div>
+      <p class="report-operation-status" data-report-operation-status aria-live="polite" hidden></p>
 
       {% if not scripts %}
       <p class="empty-state">没有可展示的请求明细。</p>

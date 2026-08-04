@@ -1,0 +1,27 @@
+<!-- 按规范化接口地址汇总请求状态、数据范围并承载该接口的请求卡片。 -->
+
+<section class="endpoint-group{% if group.expanded %} endpoint-group-failed{% endif %}" data-endpoint-group id="{{ group.group_id }}">
+  <button type="button" class="endpoint-group-toggle" data-endpoint-group-toggle aria-expanded="{{ 'true' if group.expanded else 'false' }}" aria-controls="{{ group.group_id }}-panel">
+    <span class="endpoint-group-identity">
+      <strong>{{ group.label }}</strong>
+      <small>{{ group.url }}</small>
+    </span>
+    <span class="endpoint-group-counts" aria-label="接口请求统计">
+      <span>请求 {{ group.fragments|length }}</span>
+      <span class="endpoint-group-failed-count">失败 {{ group.failed }}</span>
+      <span class="endpoint-group-passed-count">通过 {{ group.passed }}</span>
+    </span>
+    <span class="endpoint-range-list" aria-label="数据范围状态">
+      {% for range in group.ranges %}
+      <span class="endpoint-range-badge endpoint-range-{{ 'failed' if range.failed else 'passed' }}">{{ range.text }} · {% if range.failed %}失败 {{ range.failed }}{% if range.passed %} / 通过 {{ range.passed }}{% elif range.total > 1 %} / {{ range.total }}{% endif %}{% else %}通过 {{ range.passed }}{% endif %}</span>
+      {% endfor %}
+    </span>
+    <span class="endpoint-group-action">
+      <span data-endpoint-group-label>{{ "收起接口" if group.expanded else "展开接口" }}</span>
+      <span class="toggle-chevron" aria-hidden="true"></span>
+    </span>
+  </button>
+  <div class="endpoint-group-panel" id="{{ group.group_id }}-panel" data-endpoint-group-panel{% if not group.expanded %} hidden{% endif %}>
+    <!-- REPORT_ENDPOINT_SAMPLE_CARDS -->
+  </div>
+</section>

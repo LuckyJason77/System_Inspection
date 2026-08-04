@@ -6,6 +6,7 @@ import base64
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import gzip
 import hashlib
 from importlib import resources
 import json
@@ -35,9 +36,16 @@ from .request_period import QueryDataRange, analyze_query_data_range
 from .report_filter import is_url_excluded
 
 
-_TEMPLATE_NAMES = ("base.html", "suite.html", "script.html", "sample.html")
+_TEMPLATE_NAMES = (
+    "base.html",
+    "suite.html",
+    "script.html",
+    "endpoint_group.html",
+    "sample.html",
+)
 _SUITE_DETAILS_MARKER = "<!-- REPORT_SCRIPT_DETAILS -->"
 _SCRIPT_SAMPLES_MARKER = "<!-- REPORT_SAMPLE_CARDS -->"
+_ENDPOINT_SAMPLES_MARKER = "<!-- REPORT_ENDPOINT_SAMPLE_CARDS -->"
 _REPORT_SAMPLE_TYPE = "httpSample"
 _BEIJING_TIMEZONE = ZoneInfo("Asia/Shanghai")
 _REPORT_FILENAME = "report.html"
@@ -56,8 +64,12 @@ _STATUS_LABELS = {
 @dataclass(frozen=True, slots=True)
 class _SampleFragment:
     sample_id: str
+    target_id: str
     sequence: int
     passed: bool
+    label: str
+    url: str
+    endpoint_key: str
     endpoint_order: int
     query_data_range: QueryDataRange
     path: Path
@@ -65,6 +77,7 @@ class _SampleFragment:
 
 @dataclass(frozen=True, slots=True)
 class _FailedSampleOverview:
+    target_id: str
     sequence: int
     label: str
     url: str
@@ -77,11 +90,51 @@ class _FailedSampleOverview:
 
 
 @dataclass(frozen=True, slots=True)
+class _EndpointRangeSummary:
+    text: str
+    total: int
+    passed: int
+    failed: int
+
+
+@dataclass(frozen=True, slots=True)
+class _EndpointGroup:
+    group_id: str
+    endpoint_key: str
+    label: str
+    url: str
+    fragments: tuple[_SampleFragment, ...]
+    ranges: tuple[_EndpointRangeSummary, ...]
+    passed: int
+    failed: int
+    expanded: bool
+
+
+@dataclass(frozen=True, slots=True)
+class _FailureRangeLink:
+    text: str
+    count: int
+    target_id: str
+    always_visible: bool
+
+
+@dataclass(frozen=True, slots=True)
+class _FailedEndpointOverview:
+    endpoint_key: str
+    label: str
+    url: str
+    failure_count: int
+    ranges: tuple[_FailureRangeLink, ...]
+    timestamp_ms: int | None
+
+
+@dataclass(frozen=True, slots=True)
 class _RenderedScript:
     execution: JMeterExecutionResult
     artifact_name: str
     result: ScriptReportResult
     fragments: tuple[_SampleFragment, ...]
+    endpoint_groups: tuple[_EndpointGroup, ...]
     failed_samples: tuple[_FailedSampleOverview, ...]
 
 
@@ -410,6 +463,134 @@ def _endpoint_key(url: str, *, missing_key: str) -> str:
     return parsed.path or missing_key
 
 
+def _compressed_sample_payload(
+    request_parameters: str,
+    response_data: str,
+) -> str:
+    payload = json.dumps(
+        {
+            "request": request_parameters,
+            "response": response_data,
+        },
+        ensure_ascii=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    compressed = gzip.compress(payload, compresslevel=9, mtime=0)
+    return base64.b64encode(compressed).decode("ascii")
+
+
+def _endpoint_display_url(
+    endpoint_key: str,
+    samples: tuple[_SampleFragment, ...],
+) -> str:
+    if not endpoint_key.startswith("\0"):
+        return endpoint_key
+    return next(
+        (sample.url.strip() for sample in samples if sample.url.strip()),
+        "未记录 URL",
+    )
+
+
+def _build_endpoint_groups(
+    fragments: tuple[_SampleFragment, ...],
+    script_index: int,
+) -> tuple[_EndpointGroup, ...]:
+    grouped: dict[str, list[_SampleFragment]] = {}
+    for fragment in fragments:
+        grouped.setdefault(fragment.endpoint_key, []).append(fragment)
+
+    groups: list[_EndpointGroup] = []
+    for group_index, (endpoint_key, group_fragments) in enumerate(
+        grouped.items(),
+        start=1,
+    ):
+        samples = tuple(group_fragments)
+        source_order_samples = tuple(
+            sorted(samples, key=lambda sample: sample.sequence)
+        )
+        range_samples: dict[str, list[_SampleFragment]] = {}
+        for sample in source_order_samples:
+            range_samples.setdefault(
+                sample.query_data_range.text,
+                [],
+            ).append(sample)
+        ranges = tuple(
+            _EndpointRangeSummary(
+                text=text,
+                total=len(items),
+                passed=sum(item.passed for item in items),
+                failed=sum(not item.passed for item in items),
+            )
+            for text, items in range_samples.items()
+        )
+        passed = sum(sample.passed for sample in samples)
+        failed = len(samples) - passed
+        first_sample = source_order_samples[0]
+        groups.append(
+            _EndpointGroup(
+                group_id=(
+                    f"script-{script_index:02d}-endpoint-{group_index:04d}"
+                ),
+                endpoint_key=endpoint_key,
+                label=first_sample.label or "未命名请求",
+                url=_endpoint_display_url(endpoint_key, samples),
+                fragments=samples,
+                ranges=ranges,
+                passed=passed,
+                failed=failed,
+                expanded=failed > 0,
+            )
+        )
+    return tuple(groups)
+
+
+def _build_failed_endpoint_overviews(
+    rendered_scripts: tuple[_RenderedScript, ...],
+) -> tuple[_FailedEndpointOverview, ...]:
+    grouped: dict[str, list[_FailedSampleOverview]] = {}
+    for rendered in rendered_scripts:
+        for sample in rendered.failed_samples:
+            grouped.setdefault(sample.endpoint_key, []).append(sample)
+
+    overviews: list[_FailedEndpointOverview] = []
+    for endpoint_key, samples in grouped.items():
+        range_samples: dict[str, list[_FailedSampleOverview]] = {}
+        for sample in samples:
+            range_samples.setdefault(
+                sample.query_data_range.text,
+                [],
+            ).append(sample)
+        ranges = tuple(
+            _FailureRangeLink(
+                text=text,
+                count=len(items),
+                target_id=items[0].target_id,
+                always_visible=any(
+                    not item.query_data_range.has_time_condition
+                    for item in items
+                ),
+            )
+            for text, items in range_samples.items()
+        )
+        first_sample = samples[0]
+        display_url = (
+            endpoint_key
+            if not endpoint_key.startswith("\0")
+            else first_sample.url or "未记录 URL"
+        )
+        overviews.append(
+            _FailedEndpointOverview(
+                endpoint_key=endpoint_key,
+                label=first_sample.label or "未命名请求",
+                url=display_url,
+                failure_count=len(samples),
+                ranges=ranges,
+                timestamp_ms=first_sample.timestamp_ms,
+            )
+        )
+    return tuple(overviews)
+
+
 def _collect_script_report(
     environment: Environment,
     run_directory: Path,
@@ -418,6 +599,7 @@ def _collect_script_report(
     execution: JMeterExecutionResult,
     script_index: int,
     excluded_url_keywords: tuple[str, ...],
+    additional_date_parameter_names: tuple[str, ...],
 ) -> _RenderedScript:
     artifact_name = execution.jtl_path.parent.name
     fragment_directory = fragment_root / f"script-{script_index:02d}"
@@ -427,8 +609,14 @@ def _collect_script_report(
 
     def render_sample(sample: SampleRecord) -> None:
         fragment_path = fragment_directory / f"{sample.sample_id}.html"
+        dom_prefix = f"script-{script_index:02d}-{sample.sample_id}"
         request_parameters = _request_parameters(sample)
-        query_data_range = analyze_query_data_range(request_parameters)
+        query_data_range = analyze_query_data_range(
+            request_parameters,
+            additional_date_parameter_names=(
+                additional_date_parameter_names
+            ),
+        )
         endpoint_key = _endpoint_key(
             sample.url,
             missing_key=f"\0{script_index}:{sample.sample_id}",
@@ -448,13 +636,29 @@ def _collect_script_report(
             request_parameters=request_parameters,
             query_data_range=query_data_range,
             expanded=not sample.passed,
-            dom_prefix=f"script-{script_index:02d}-{sample.sample_id}",
+            dom_prefix=dom_prefix,
+            endpoint_group_id=(
+                f"script-{script_index:02d}-endpoint-"
+                f"{endpoint_order + 1:04d}"
+            ),
+            compressed_payload=(
+                _compressed_sample_payload(
+                    request_parameters,
+                    sample.response_data,
+                )
+                if sample.passed
+                else None
+            ),
         )
         fragments.append(
             _SampleFragment(
                 sample_id=sample.sample_id,
+                target_id=f"{dom_prefix}-card",
                 sequence=sample.sequence,
                 passed=sample.passed,
+                label=sample.label,
+                url=sample.url,
+                endpoint_key=endpoint_key,
                 endpoint_order=endpoint_order,
                 query_data_range=query_data_range,
                 path=fragment_path,
@@ -463,6 +667,7 @@ def _collect_script_report(
         if not sample.passed:
             failed_samples.append(
                 _FailedSampleOverview(
+                    target_id=f"{dom_prefix}-card",
                     sequence=sample.sequence,
                     label=sample.label,
                     url=sample.url,
@@ -509,19 +714,24 @@ def _collect_script_report(
             execution.process_tree_termination_confirmed
         ),
     )
+    sorted_fragments = tuple(
+        sorted(
+            fragments,
+            key=lambda fragment: (
+                fragment.endpoint_order,
+                fragment.passed,
+                fragment.sequence,
+            ),
+        )
+    )
     return _RenderedScript(
         execution=execution,
         artifact_name=artifact_name,
         result=result,
-        fragments=tuple(
-            sorted(
-                fragments,
-                key=lambda fragment: (
-                    fragment.endpoint_order,
-                    fragment.passed,
-                    fragment.sequence,
-                ),
-            )
+        fragments=sorted_fragments,
+        endpoint_groups=_build_endpoint_groups(
+            sorted_fragments,
+            script_index,
         ),
         failed_samples=tuple(
             sorted(
@@ -549,27 +759,7 @@ def _write_streamed_suite_page(
 ) -> None:
     scripts = tuple(rendered.result for rendered in rendered_scripts)
     totals = _report_totals(scripts)
-    failed_samples_in_source_order = tuple(
-        sample
-        for rendered in rendered_scripts
-        for sample in rendered.failed_samples
-    )
-    failed_endpoint_orders: dict[str, int] = {}
-    failed_samples_with_order: list[
-        tuple[int, int, _FailedSampleOverview]
-    ] = []
-    for source_order, sample in enumerate(failed_samples_in_source_order):
-        endpoint_order = failed_endpoint_orders.setdefault(
-            sample.endpoint_key,
-            len(failed_endpoint_orders),
-        )
-        failed_samples_with_order.append(
-            (endpoint_order, source_order, sample)
-        )
-    failed_samples = tuple(
-        sample
-        for _, _, sample in sorted(failed_samples_with_order)
-    )
+    failed_endpoints = _build_failed_endpoint_overviews(rendered_scripts)
     period_options = tuple(
         sorted(
             {
@@ -587,7 +777,7 @@ def _write_streamed_suite_page(
         status=status,
         scripts=scripts,
         totals=totals,
-        failed_samples=failed_samples,
+        failed_endpoints=failed_endpoints,
         period_options=period_options,
         failure_rate=_format_failure_rate(
             totals["failed_samples"],
@@ -626,10 +816,21 @@ def _write_streamed_suite_page(
                 "script.html",
             )
             output.write(script_before.encode("utf-8"))
-            for fragment in rendered.fragments:
-                with fragment.path.open("rb") as source:
-                    shutil.copyfileobj(source, output)
-                output.write(b"\n")
+            for endpoint_group in rendered.endpoint_groups:
+                endpoint_shell = environment.get_template(
+                    "endpoint_group.html"
+                ).render(group=endpoint_group)
+                endpoint_before, endpoint_after = _partition_template(
+                    endpoint_shell,
+                    _ENDPOINT_SAMPLES_MARKER,
+                    "endpoint_group.html",
+                )
+                output.write(endpoint_before.encode("utf-8"))
+                for fragment in endpoint_group.fragments:
+                    with fragment.path.open("rb") as source:
+                        shutil.copyfileobj(source, output)
+                    output.write(b"\n")
+                output.write(endpoint_after.encode("utf-8"))
             output.write(script_after.encode("utf-8"))
         output.write(suite_after.encode("utf-8"))
 
@@ -723,6 +924,7 @@ def generate_suite_html_report(
     suite_result: SuiteProcessResult,
     *,
     excluded_url_keywords: tuple[str, ...] = (),
+    additional_date_parameter_names: tuple[str, ...] = (),
 ) -> SuiteHtmlReportResult:
     run_directory = suite_result.run_directory
     run_directory.mkdir(parents=True, exist_ok=True)
@@ -749,6 +951,7 @@ def generate_suite_html_report(
                     execution,
                     script_index,
                     excluded_url_keywords,
+                    additional_date_parameter_names,
                 )
                 for script_index, execution in enumerate(
                     suite_result.executions,
@@ -794,10 +997,12 @@ def generate_suite_report(
     suite_result: SuiteProcessResult,
     *,
     excluded_url_keywords: tuple[str, ...] = (),
+    additional_date_parameter_names: tuple[str, ...] = (),
 ) -> SuiteReportResult:
     html_result = generate_suite_html_report(
         suite_result,
         excluded_url_keywords=excluded_url_keywords,
+        additional_date_parameter_names=additional_date_parameter_names,
     )
     manifest_path = suite_result.run_directory / "manifest.json"
     _write_manifest(
