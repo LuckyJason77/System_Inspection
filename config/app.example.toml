@@ -1,0 +1,21 @@
+# 提供 JMeter、脚本、调度、报告过滤和输出目录的示例配置。
+
+[jmeter]
+executable = "D:/tools/apache-jmeter/bin/jmeter.bat"
+properties_file = "D:/tools/apache-jmeter/bin/jmeter.properties"
+
+[scripts]
+directory = "../jmx"
+timeout_seconds = 3600
+
+[schedule]
+timezone = "Asia/Shanghai"
+cron = "0 2 * * *"
+
+[output]
+directory = "../runs"
+
+[report]
+# URL 会先移除 Query 和 fragment，再按以下关键字做不区分大小写的包含匹配。
+# 命中的接口不会显示、统计，也不会影响巡检结论。
+excluded_url_keywords = []

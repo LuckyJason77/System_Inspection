@@ -1,0 +1,72 @@
+<!-- 渲染单个 HTTP 样本的概要、请求响应原文、断言和展开控件。 -->
+
+<article class="sample-card sample-card-{{ sample_status.value }}" data-sample-item data-status="{{ sample_status.value }}" data-search-text="{{ sample.label }} {{ sample.url }}" data-query-data-range="{{ query_data_range.text }}" data-period-always-visible="{{ 'false' if query_data_range.has_time_condition else 'true' }}" data-sample-id="{{ sample.sample_id }}">
+  <header class="sample-card-header">
+    <div class="sample-identity">
+      <span class="sample-state-dot" aria-hidden="true"></span>
+      <div>
+        <div class="sample-title-line">
+          <h4>{{ sample.label or "未命名请求" }}</h4>
+          <strong class="request-time">请求时间：{{ sample.timestamp_ms|sample_time }}</strong>
+          <strong class="query-data-range{% if query_data_range.invalid %} query-data-range-warning{% endif %}">查询数据范围：{{ query_data_range.text }}</strong>
+        </div>
+        <p>{{ sample.url or "未记录 URL" }}</p>
+      </div>
+    </div>
+    <div class="sample-result">
+      <span class="status-badge status-{{ sample_status.value }}">{{ sample_status|status_label }}</span>
+      <span class="metric"><small>响应码</small><strong>{{ sample.response_code or "未记录" }}</strong></span>
+      <span class="metric"><small>耗时</small><strong>{{ (sample.elapsed_ms|string + " ms") if sample.elapsed_ms is not none else "未记录" }}</strong></span>
+      <button type="button" class="detail-toggle" data-detail-toggle aria-expanded="{{ 'true' if expanded else 'false' }}" aria-controls="{{ dom_prefix }}-detail">
+        <span data-toggle-label>{{ "收起" if expanded else "展开" }}</span>
+        <span class="toggle-chevron" aria-hidden="true"></span>
+      </button>
+    </div>
+  </header>
+
+  <div class="sample-detail" id="{{ dom_prefix }}-detail" data-detail-panel{% if not expanded %} hidden{% endif %}>
+    <section class="url-block">
+      <div class="block-heading">
+        <h5>URL</h5>
+        <button type="button" class="copy-button" data-copy-target="{{ dom_prefix }}-url">复制</button>
+      </div>
+      <pre id="{{ dom_prefix }}-url">{{ sample.url or "未记录 URL" }}</pre>
+    </section>
+
+    <div class="parameter-grid">
+      <section class="parameter-block request-block">
+        <div class="block-heading">
+          <div><span class="block-index">REQ</span><h5>请求参数</h5></div>
+          <button type="button" class="copy-button" data-copy-target="{{ dom_prefix }}-request">复制</button>
+        </div>
+        <pre id="{{ dom_prefix }}-request" data-raw-request>{{ request_parameters or "无请求参数" }}</pre>
+      </section>
+
+      <section class="parameter-block response-block">
+        <div class="block-heading">
+          <div><span class="block-index">RES</span><h5>响应参数</h5></div>
+          <button type="button" class="copy-button" data-copy-target="{{ dom_prefix }}-response">复制</button>
+        </div>
+        <pre id="{{ dom_prefix }}-response" data-raw-response>{{ sample.response_data or "无响应参数" }}</pre>
+      </section>
+    </div>
+
+    {% if sample.assertions %}
+    <section class="assertion-block">
+      <div class="block-heading">
+        <div><span class="block-index">AST</span><h5>断言结果</h5></div>
+        <span class="assertion-count">{{ sample.assertions|length }} 条</span>
+      </div>
+      <div class="assertion-list">
+      {% for assertion in sample.assertions %}
+        <div class="assertion-row assertion-{{ 'passed' if assertion.passed else 'failed' }}">
+          <span class="status-badge status-{{ 'passed' if assertion.passed else 'failed' }}">{{ "通过" if assertion.passed else "失败" }}</span>
+          <strong>{{ assertion.name or "未命名断言" }}</strong>
+          <p>{{ assertion.failure_message or "无失败信息" }}</p>
+        </div>
+      {% endfor %}
+      </div>
+    </section>
+    {% endif %}
+  </div>
+</article>

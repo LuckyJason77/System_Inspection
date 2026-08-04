@@ -1,0 +1,152 @@
+<!doctype html>
+<!-- 渲染巡检汇总、失败接口概览和全部请求明细的单页报告。 -->
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src '{{ style_csp_hash }}'; script-src '{{ script_csp_hash }}'; img-src data:; base-uri 'none'; form-action 'none'">
+  <title>{{ title }}</title>
+  <style>{{ report_css }}</style>
+</head>
+<body>
+  <main class="report-shell">
+    <header class="hero hero-{{ status.value }}">
+      <div class="hero-main">
+        <div class="brand-line">
+          <span class="brand-mark" aria-hidden="true">A</span>
+          <p class="eyebrow">自动化巡检</p>
+        </div>
+        <h1>本次巡检{{ status|status_label }}</h1>
+        <div class="hero-meta">
+          <span>运行 ID：<strong>{{ suite.run_id }}</strong></span>
+          <span>开始：{{ suite.started_at|beijing_time }}</span>
+          <span>结束：{{ suite.finished_at|beijing_time }}</span>
+          <span>耗时：{{ (suite.finished_at - suite.started_at).total_seconds()|duration }}</span>
+        </div>
+      </div>
+      <span class="status-badge status-badge-large status-{{ status.value }}">{{ status|status_label }}</span>
+    </header>
+
+    <section class="summary-grid" aria-label="巡检汇总">
+      <article class="summary-card" data-summary-card="requests">
+        <span>请求总数</span>
+        <strong>{{ totals.leaf_samples }}</strong>
+        <small>本次参与巡检结论的请求</small>
+      </article>
+      <article class="summary-card summary-card-success" data-summary-card="passed-requests">
+        <span>通过请求</span>
+        <strong>{{ totals.passed_samples }}</strong>
+        <small>结果与断言均通过</small>
+      </article>
+      <article class="summary-card summary-card-danger" data-summary-card="failed-requests">
+        <span>失败请求</span>
+        <strong>{{ totals.failed_samples }}</strong>
+        <small>同接口组内失败项优先</small>
+      </article>
+      <article class="summary-card summary-card-warning" data-summary-card="failed-assertions">
+        <span>失败断言</span>
+        <strong>{{ assertion_failures }}</strong>
+        <small>需要优先核对的断言</small>
+      </article>
+    </section>
+
+    <section class="panel overview-panel">
+      <div class="section-heading">
+        <div>
+          <p class="section-kicker">执行概览</p>
+          <h2>失败接口概览</h2>
+        </div>
+        <label class="period-filter-field">
+          <span>查询数据范围</span>
+          <select class="period-filter" data-period-filter aria-label="筛选失败接口查询数据范围"{% if not period_options %} disabled{% endif %}>
+            <option value="all">全部数据范围</option>
+            {% for period in period_options %}
+            <option value="{{ period }}">{{ period }}</option>
+            {% endfor %}
+          </select>
+        </label>
+      </div>
+      {% if failed_samples %}
+      <div class="failure-overview-summary" aria-label="失败接口汇总">
+        <span>失败 {{ totals.failed_samples }} / {{ totals.leaf_samples }}</span>
+        <span>失败率 {{ failure_rate }}</span>
+        <span>失败断言 {{ assertion_failures }}</span>
+        <span>当前显示 <strong data-overview-visible-count>{{ failed_samples|length }}</strong> / {{ failed_samples|length }}</span>
+      </div>
+      <div class="table-scroll" data-overview-table>
+        <table class="failure-overview-table">
+          <thead>
+            <tr>
+              <th scope="col">请求时间</th>
+              <th scope="col">接口</th>
+              <th scope="col">查询数据范围</th>
+            </tr>
+          </thead>
+          <tbody>
+          {% for sample in failed_samples %}
+            <tr data-failed-overview-item data-query-data-range="{{ sample.query_data_range.text }}" data-period-always-visible="{{ 'false' if sample.query_data_range.has_time_condition else 'true' }}">
+              <td><strong class="failed-request-time">{{ sample.timestamp_ms|sample_time }}</strong></td>
+              <td class="failed-interface-cell">
+                <strong>{{ sample.label or "未命名请求" }}</strong>
+                <small>{{ sample.url or "未记录 URL" }}</small>
+              </td>
+              <td class="query-data-range-cell{% if sample.query_data_range.invalid %} query-data-range-warning{% endif %}"><strong>{{ sample.query_data_range.text }}</strong></td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      <p class="overview-empty overview-empty-success" data-overview-filter-empty hidden>当前数据范围下没有失败接口。</p>
+      {% elif status.value == "passed" %}
+      <p class="overview-empty overview-empty-success">本次无失败接口，所有请求均已通过。</p>
+      {% else %}
+      <p class="overview-empty overview-empty-warning">没有可汇总的失败接口，请查看下方执行异常信息。</p>
+      {% endif %}
+    </section>
+
+    <section class="details-area" aria-labelledby="request-details-title">
+      <div class="details-heading">
+        <div>
+          <p class="section-kicker">完整原文</p>
+          <h2 id="request-details-title">请求明细</h2>
+          <p>相同接口集中展示，组内失败请求优先；失败默认展开，通过默认收起。</p>
+        </div>
+        <button type="button" class="all-details-toggle" data-all-details-toggle aria-controls="request-details-content"{% if detail_count == 0 %} disabled{% endif %}>
+          <span data-all-details-label>{{ "收起全部" if failed_samples else "展开全部" }}</span>
+        </button>
+      </div>
+
+      <div class="sample-toolbar">
+        <label class="search-field">
+          <span class="visually-hidden">搜索请求名称或 URL</span>
+          <span class="search-icon" aria-hidden="true"></span>
+          <input type="search" data-sample-search placeholder="搜索请求名称或 URL" autocomplete="off">
+        </label>
+        <label class="period-filter-field">
+          <span>查询数据范围</span>
+          <select class="period-filter" data-period-filter aria-label="筛选请求明细查询数据范围"{% if not period_options %} disabled{% endif %}>
+            <option value="all">全部数据范围</option>
+            {% for period in period_options %}
+            <option value="{{ period }}">{{ period }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        <div class="filter-buttons" aria-label="筛选请求状态">
+          <button type="button" data-filter="all" aria-pressed="true">全部</button>
+          <button type="button" data-filter="failed" aria-pressed="false">失败</button>
+          <button type="button" data-filter="passed" aria-pressed="false">通过</button>
+        </div>
+        <p class="match-count" aria-live="polite">显示 <strong data-visible-count>{{ detail_count }}</strong> / {{ detail_count }}</p>
+      </div>
+
+      {% if not scripts %}
+      <p class="empty-state">没有可展示的请求明细。</p>
+      {% endif %}
+      <div id="request-details-content">
+        <!-- REPORT_SCRIPT_DETAILS -->
+      </div>
+    </section>
+  </main>
+  <script>{{ report_js }}</script>
+</body>
+</html>

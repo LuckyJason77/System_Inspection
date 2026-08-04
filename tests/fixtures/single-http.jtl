@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testResults version="1.2">
+  <httpSample
+    lb="登录 &amp; 查询"
+    s="TrUe"
+    ts="1722398765432"
+    t="345"
+    rc="200"
+    rm="OK &amp; ready"
+    tn="线程组 1-1"
+    dt="text"
+    de="UTF-8">
+    <java.net.URL>https://example.test/登录?x=1&amp;y=二</java.net.URL>
+    <queryString><![CDATA[{"用户名":"张三","html":"</pre><script>"}]]></queryString>
+    <requestHeader><![CDATA[Content-Type: application/json
+X-原样: 值]]></requestHeader>
+    <samplerData><![CDATA[POST https://example.test/登录
+{"用户名":"张三"}]]></samplerData>
+    <responseHeader><![CDATA[HTTP/1.1 200 OK
+X-Note: 中文]]></responseHeader>
+    <responseData><![CDATA[第一行
+</pre><script>alert("x")</script>
+最后一行]]></responseData>
+    <assertionResult>
+      <name>状态断言</name>
+      <failure>false</failure>
+      <error>false</error>
+      <failureMessage></failureMessage>
+    </assertionResult>
+    <assertionResult>
+      <name>正文断言</name>
+      <failure>TRUE</failure>
+      <error>false</error>
+      <failureMessage>应包含欢迎语
+第二行</failureMessage>
+    </assertionResult>
+  </httpSample>
+</testResults>

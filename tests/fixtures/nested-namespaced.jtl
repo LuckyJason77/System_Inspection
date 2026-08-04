@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<j:testResults xmlns:j="urn:example:jmeter" version="1.2">
+  <j:httpSample lb="父事务" s="false" rc="500">
+    <j:sample lb="非 HTTP 子样本" s="true" ts="1001" t="12" rc="201">
+      <j:responseData>child 中文</j:responseData>
+    </j:sample>
+  </j:httpSample>
+  <j:sample lb="同级非 HTTP 样本" s="TRUE" ts="1002" t="7" rc="204" />
+</j:testResults>

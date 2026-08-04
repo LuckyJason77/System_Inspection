@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testResults version="1.2">
+  <httpSample lb="缺少属性" />
+  <sample lb="非法属性" s=" yes " ts="NaN" t="3.5" />
+</testResults>

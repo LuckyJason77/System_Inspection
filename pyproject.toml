@@ -1,0 +1,36 @@
+# 定义项目构建、依赖、包资源和 pytest 运行配置。
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "jmeter-suite-runner"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+    "APScheduler>=3.11.3,<4",
+    "Jinja2>=3.1,<4",
+    "tzdata",
+]
+
+[project.optional-dependencies]
+dev = ["pytest"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+jmeter_suite = [
+    "templates/*.html",
+    "static/*.css",
+    "static/*.js",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+addopts = "--basetemp=.test-output/pytest"
+cache_dir = ".test-output/pytest-cache"
+markers = [
+    "integration: runs the real local JMeter process and HTTP fixture",
+]

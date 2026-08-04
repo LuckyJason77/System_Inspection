@@ -1,0 +1,67 @@
+# 定义不纳入版本控制的本机配置、运行产物、缓存和构建文件。
+
+# 本机配置、运行产物与测试输出
+/config/app.toml
+/runs/
+/manual_reports/
+/.test-output/
+jmx/
+*.log
+*.log.*
+
+# Python 虚拟环境、字节码与工具缓存
+/.venv/
+/venv/
+__pycache__/
+.mypy_cache/
+.ruff_cache/
+.pyright/
+.pyre/
+.hypothesis/
+.cache/
+.coverage
+.coverage.*
+coverage.xml
+coverage.json
+htmlcov/
+.tox/
+.nox/
+.ipynb_checkpoints/
+
+# Python 构建与打包产物
+*.egg-info/
+/.eggs/
+/build/
+/dist/
+/wheels/
+*.whl
+/pip-wheel-metadata/
+
+# IDE、编辑器与操作系统文件
+/.idea/
+/.vscode/
+*.iml
+*.code-workspace
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# 临时文件与备份
+*.tmp
+*.temp
+*.bak
+*.orig
+*.rej
+~$*
+/tmp/
+/temp/
+
+# Codex / Superpowers 本地辅助流程
+/.agents/
+/.codex/
+/docs/superpowers/

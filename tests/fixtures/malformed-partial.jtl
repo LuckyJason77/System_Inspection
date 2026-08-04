@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testResults version="1.2">
+  <httpSample lb="已完成" s="true" ts="101" t="9" rc="200">
+    <responseData>完整样本</responseData>
+  </httpSample>
+  <httpSample lb="未完成" s="true" rc="500">
+    <responseData>损坏内容</responseData>
+</testResults>

@@ -1,0 +1,29 @@
+<!-- 渲染单个 JMeter 脚本的执行状态和流式样本容器。 -->
+
+<section class="script-section" data-script-section data-script-index="{{ script_index }}">
+  {% if execution.status.value != "completed" %}
+  <aside class="warning" role="alert">
+    <strong>进程未正常完成</strong>
+    <p>来源：{{ script.script_name }}。进程状态：{{ execution.status|status_label }}。{{ execution.error or "未提供错误原因" }}</p>
+  </aside>
+  {% endif %}
+  {% if not script.parse_result.complete %}
+  <aside class="warning" role="alert">
+    <strong>JTL 解析不完整</strong>
+    <p>来源：{{ script.script_name }}。{{ script.parse_result.error or "未提供解析错误" }}。以下仅展示已经完整结束的请求。</p>
+  </aside>
+  {% endif %}
+  {% if script.error and execution.status.value == "completed" and script.parse_result.complete and not script.parse_result.summaries %}
+  <aside class="script-error" role="alert">
+    <strong>错误原因</strong>
+    <p>来源：{{ script.script_name }}。{{ script.error }}</p>
+  </aside>
+  {% endif %}
+
+  <div class="sample-list" data-script-samples>
+    <!-- REPORT_SAMPLE_CARDS -->
+  </div>
+  {% if not script.parse_result.summaries %}
+  <p class="empty-state" data-script-empty>没有可展示的完整请求。</p>
+  {% endif %}
+</section>

@@ -1,0 +1,18 @@
+<!doctype html>
+<!-- 提供可复用的离线报告页面骨架、内嵌资源和内容插槽。 -->
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src '{{ style_csp_hash }}'; script-src '{{ script_csp_hash }}'; img-src data:; base-uri 'none'; form-action 'none'">
+  <title>{{ title }}</title>
+  <style>{{ report_css }}</style>
+</head>
+<body>
+  <a class="skip-link" href="#main-content">跳到主要内容</a>
+  <main class="page-shell" id="main-content">
+    {% block content %}{% endblock %}
+  </main>
+  <script>{{ report_js }}</script>
+</body>
+</html>
