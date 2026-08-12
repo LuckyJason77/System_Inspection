@@ -247,9 +247,17 @@ class ReportConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class DingTalkConfig:
+    enabled: bool = False
+    client_id: str = ""
+    client_secret: str = ""
+
+
+@dataclass(frozen=True, slots=True)
 class AppConfig:
     jmeter: JMeterConfig
     schedule: ScheduleConfig
     runner: RunnerConfig
     scripts: tuple[ScriptConfig, ...]
     report: ReportConfig = ReportConfig()
+    dingtalk: DingTalkConfig = DingTalkConfig()

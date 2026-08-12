@@ -9,6 +9,7 @@ import signal
 import sys
 from threading import Event
 from types import FrameType
+from typing import Any
 
 from .config import (
     ConfigError,
@@ -30,6 +31,7 @@ from .scheduler import (
 JMeterValidator = Callable[[AppConfig, Event], str]
 SuiteExecutor = Callable[[AppConfig, Event], SuiteReportResult]
 SchedulerRunner = Callable[[AppConfig, Event], bool]
+ReportNotifier = Callable[[AppConfig, SuiteReportResult], Any]
 
 
 class _ApplicationCancelled(RuntimeError):
@@ -153,6 +155,7 @@ def run_once_application(
     *,
     jmeter_validator: JMeterValidator = validate_jmeter_executable,
     suite_executor: SuiteExecutor = execute_suite_once,
+    report_notifier: ReportNotifier | None = None,
 ) -> int:
     cancel_event = Event()
     try:
@@ -169,6 +172,39 @@ def run_once_application(
             _raise_if_cancelled(cancel_event)
             _print_run_summary(result)
             _raise_if_cancelled(cancel_event)
+            if config.dingtalk.enabled:
+                try:
+                    if report_notifier is None:
+                        from .dingtalk_service import (
+                            notify_report_to_bound_group,
+                        )
+
+                        report_notifier = notify_report_to_bound_group
+                    delivery = report_notifier(config, result)
+                    if delivery is None:
+                        print("钉钉报告: 未发送（尚未绑定巡检群）")
+                    elif (
+                        delivery.summary_sent
+                        and delivery.attachment_sent
+                    ):
+                        print("钉钉报告: 已发送")
+                    elif (
+                        delivery.summary_sent
+                        and delivery.archive_too_large
+                    ):
+                        print("钉钉报告: 已发送结论（ZIP 超过 20MB）")
+                    else:
+                        print(
+                            "钉钉报告发送失败："
+                            f"{delivery.error or '未知错误'}",
+                            file=sys.stderr,
+                        )
+                except Exception as error:
+                    print(
+                        f"钉钉报告发送失败：{error}",
+                        file=sys.stderr,
+                    )
+                _raise_if_cancelled(cancel_event)
         if cancel_event.is_set() or result.status is ReportStatus.CANCELLED:
             return 130
         return 0 if result.status is ReportStatus.PASSED else 1

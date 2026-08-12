@@ -22,6 +22,7 @@ from apscheduler.schedulers.blocking import BlockingScheduler
 from apscheduler.schedulers.base import STATE_STOPPED, SchedulerNotRunningError
 from apscheduler.triggers.cron import CronTrigger
 
+from .dingtalk_service import create_dingtalk_service
 from .locking import FileLock, LockUnavailableError
 from .models import AppConfig, ReportStatus, SuiteReportResult
 from .orchestration import execute_suite_once, runtime_directory
@@ -147,6 +148,8 @@ def run_scheduled_job(
     config: AppConfig,
     cancel_event: Event,
     logger: logging.Logger,
+    *,
+    report_notifier: Callable[[SuiteReportResult], None] | None = None,
 ) -> SuiteReportResult | None:
     if cancel_event.is_set():
         logger.info("调度任务跳过：调度器正在停止")
@@ -179,6 +182,14 @@ def run_scheduled_job(
         result.run_directory,
         result.report_path,
     )
+    if report_notifier is not None:
+        try:
+            report_notifier(result)
+        except Exception:
+            logger.exception(
+                "钉钉报告通知失败：run_id=%s",
+                result.run_id,
+            )
     return result
 
 
@@ -186,6 +197,11 @@ def run_scheduler(
     config: AppConfig,
     cancel_event: Event | None = None,
     logger: logging.Logger | None = None,
+    *,
+    dingtalk_service_factory: Callable[
+        [AppConfig, Event, logging.Logger],
+        Any,
+    ] = create_dingtalk_service,
 ) -> bool:
     """Run until shutdown; return True only when stopped by Ctrl+C."""
     cancellation = cancel_event or Event()
@@ -194,13 +210,29 @@ def run_scheduler(
     if not instance_lock.acquire():
         raise SchedulerAlreadyRunningError(instance_lock.path)
 
+    dingtalk_service = None
     try:
-        scheduled_job = partial(
-            run_scheduled_job,
-            config,
-            cancellation,
-            scheduler_logger,
-        )
+        if config.dingtalk.enabled:
+            dingtalk_service = dingtalk_service_factory(
+                config,
+                cancellation,
+                scheduler_logger,
+            )
+            dingtalk_service.start()
+            scheduled_job = partial(
+                run_scheduled_job,
+                config,
+                cancellation,
+                scheduler_logger,
+                report_notifier=dingtalk_service.notify_report,
+            )
+        else:
+            scheduled_job = partial(
+                run_scheduled_job,
+                config,
+                cancellation,
+                scheduler_logger,
+            )
         scheduler = build_scheduler(
             config,
             scheduled_job,
@@ -235,4 +267,6 @@ def run_scheduler(
         scheduler_logger.info("调度器正常退出")
         return False
     finally:
+        if dingtalk_service is not None:
+            dingtalk_service.stop()
         instance_lock.release()

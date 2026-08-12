@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 import importlib
 import io
 import logging
@@ -17,6 +18,7 @@ import pytest
 
 from jmeter_suite.models import (
     AppConfig,
+    DingTalkConfig,
     JTLParseResult,
     JMeterConfig,
     ScriptReportResult,
@@ -220,6 +222,63 @@ def test_scheduled_job_contains_unexpected_errors(
     assert result is None
     assert "调度任务执行异常" in stream.getvalue()
     assert "report exploded" in stream.getvalue()
+
+
+def test_scheduled_job_notifies_after_report_completion(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Scheduled reports must be handed to DingTalk only after generation."""
+    scheduler_module = importlib.import_module("jmeter_suite.scheduler")
+    config = _make_config(tmp_path)
+    logger, _ = _capture_logger("test.scheduler.notification")
+    report = _make_cancelled_report(config, True)
+    notifications: list[SuiteReportResult] = []
+    monkeypatch.setattr(
+        scheduler_module,
+        "execute_suite_once",
+        lambda actual_config, actual_event: report,
+    )
+
+    result = scheduler_module.run_scheduled_job(
+        config,
+        threading.Event(),
+        logger,
+        report_notifier=notifications.append,
+    )
+
+    assert result is report
+    assert notifications == [report]
+
+
+def test_scheduled_job_contains_notification_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """A DingTalk outage must not alter or lose the generated suite result."""
+    scheduler_module = importlib.import_module("jmeter_suite.scheduler")
+    config = _make_config(tmp_path)
+    logger, stream = _capture_logger("test.scheduler.notification-error")
+    report = _make_cancelled_report(config, True)
+    monkeypatch.setattr(
+        scheduler_module,
+        "execute_suite_once",
+        lambda actual_config, actual_event: report,
+    )
+
+    def failed_notification(actual_report):
+        raise RuntimeError("DingTalk unavailable")
+
+    result = scheduler_module.run_scheduled_job(
+        config,
+        threading.Event(),
+        logger,
+        report_notifier=failed_notification,
+    )
+
+    assert result is report
+    assert "钉钉报告通知失败" in stream.getvalue()
+    assert "DingTalk unavailable" in stream.getvalue()
 
 
 def test_scheduled_job_logs_unconfirmed_cleanup_after_suite_cancellation(
@@ -500,6 +559,109 @@ def test_run_scheduler_job_callback_receives_the_shared_cancellation_event(
         "event": cancel_event,
         "logger": logger,
     }
+
+
+def test_run_scheduler_starts_dingtalk_and_routes_scheduled_report(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Only the resident scheduler process should own Stream and notifications."""
+    scheduler_module = importlib.import_module("jmeter_suite.scheduler")
+    config = replace(
+        _make_config(tmp_path),
+        dingtalk=DingTalkConfig(
+            enabled=True,
+            client_id="ding-client",
+            client_secret="secret",
+        ),
+    )
+    logger, _ = _capture_logger("test.scheduler.dingtalk-runtime")
+    cancel_event = threading.Event()
+    report = _make_cancelled_report(config, True)
+
+    class FakeDingTalkService:
+        def __init__(self):
+            self.start_calls = 0
+            self.stop_calls = 0
+            self.notifications: list[SuiteReportResult] = []
+
+        def start(self):
+            self.start_calls += 1
+
+        def stop(self):
+            self.stop_calls += 1
+
+        def notify_report(self, actual_report):
+            self.notifications.append(actual_report)
+
+    service = FakeDingTalkService()
+    factory_calls: list[tuple[AppConfig, object, logging.Logger]] = []
+
+    def service_factory(actual_config, actual_event, actual_logger):
+        factory_calls.append((actual_config, actual_event, actual_logger))
+        return service
+
+    class CallbackScheduler:
+        def __init__(self, job):
+            self.job = job
+
+        def start(self):
+            self.job()
+
+    monkeypatch.setattr(
+        scheduler_module,
+        "execute_suite_once",
+        lambda actual_config, actual_event: report,
+    )
+    monkeypatch.setattr(
+        scheduler_module,
+        "build_scheduler",
+        lambda actual_config, job, actual_logger: CallbackScheduler(job),
+    )
+
+    interrupted = scheduler_module.run_scheduler(
+        config,
+        cancel_event,
+        logger,
+        dingtalk_service_factory=service_factory,
+    )
+
+    assert interrupted is False
+    assert factory_calls == [(config, cancel_event, logger)]
+    assert service.start_calls == 1
+    assert service.stop_calls == 1
+    assert service.notifications == [report]
+
+
+def test_run_scheduler_does_not_create_dingtalk_service_when_disabled(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Existing deployments without a DingTalk block must stay unchanged."""
+    scheduler_module = importlib.import_module("jmeter_suite.scheduler")
+    config = _make_config(tmp_path)
+    logger, _ = _capture_logger("test.scheduler.dingtalk-disabled")
+
+    class EmptyScheduler:
+        def start(self):
+            return None
+
+    monkeypatch.setattr(
+        scheduler_module,
+        "build_scheduler",
+        lambda actual_config, job, actual_logger: EmptyScheduler(),
+    )
+
+    interrupted = scheduler_module.run_scheduler(
+        config,
+        threading.Event(),
+        logger,
+        dingtalk_service_factory=lambda *args: pytest.fail(
+            "disabled DingTalk must not create a service"
+        ),
+    )
+
+    assert interrupted is False
 
 
 def test_run_scheduler_preserves_start_failure_while_stopped_and_releases_lock(

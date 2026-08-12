@@ -154,6 +154,54 @@ def test_execute_suite_once_holds_the_lock_through_report_generation(
     replacement.release()
 
 
+def test_execute_suite_with_acquired_lock_releases_after_report(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """A bot-accepted run must own the cross-process lock before replying."""
+    orchestration = importlib.import_module("jmeter_suite.orchestration")
+    locking = importlib.import_module("jmeter_suite.locking")
+    config = _make_config(tmp_path)
+    acquired_lock = locking.FileLock(
+        config.runner.output_root / ".runtime" / "suite.lock"
+    )
+    assert acquired_lock.acquire() is True
+    observed_locked: list[bool] = []
+
+    monkeypatch.setattr(
+        orchestration,
+        "run_suite_processes",
+        lambda actual_config, *, cancel_event=None: (
+            _successful_process_result(config)
+        ),
+    )
+    real_reporter = orchestration.generate_suite_report
+
+    def checking_reporter(process_result, **kwargs):
+        competitor = locking.FileLock(acquired_lock.path)
+        observed_locked.append(competitor.acquire())
+        competitor.release()
+        return real_reporter(process_result, **kwargs)
+
+    monkeypatch.setattr(
+        orchestration,
+        "generate_suite_report",
+        checking_reporter,
+    )
+
+    result = orchestration.execute_suite_with_acquired_lock(
+        config,
+        acquired_lock,
+        threading.Event(),
+    )
+
+    assert result.status is ReportStatus.PASSED
+    assert observed_locked == [False]
+    replacement = locking.FileLock(acquired_lock.path)
+    assert replacement.acquire() is True
+    replacement.release()
+
+
 def test_execute_suite_once_rejects_overlap_before_starting_runner(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

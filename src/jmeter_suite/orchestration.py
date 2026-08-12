@@ -38,6 +38,20 @@ def execute_suite_once(
     if not acquired:
         raise LockUnavailableError(lock.path)
 
+    return execute_suite_with_acquired_lock(
+        config,
+        lock,
+        cancel_event,
+    )
+
+
+def execute_suite_with_acquired_lock(
+    config: AppConfig,
+    lock: FileLock,
+    cancel_event: Event | None = None,
+) -> SuiteReportResult:
+    """Execute one suite while owning a lock acquired by the caller."""
+
     try:
         process_result = run_suite_processes(
             config,

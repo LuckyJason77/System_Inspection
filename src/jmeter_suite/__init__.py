@@ -8,6 +8,7 @@ from .config import (
 )
 from .models import (
     AppConfig,
+    DingTalkConfig,
     JMeterConfig,
     RunnerConfig,
     ScheduleConfig,
@@ -17,6 +18,7 @@ from .models import (
 __all__ = [
     "AppConfig",
     "ConfigError",
+    "DingTalkConfig",
     "JMeterValidationCancelled",
     "JMeterConfig",
     "RunnerConfig",

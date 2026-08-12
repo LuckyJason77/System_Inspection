@@ -15,7 +15,7 @@ from jmeter_suite.config import (
     load_config,
     validate_jmeter_executable,
 )
-from jmeter_suite.models import ReportConfig, ScheduleConfig
+from jmeter_suite.models import DingTalkConfig, ReportConfig, ScheduleConfig
 from jmeter_suite.runner import ProcessTreeTerminationResult
 
 
@@ -86,6 +86,7 @@ def test_example_config_uses_the_public_layout_and_replaces_legacy_assets():
     assert template_path.is_file()
     example = tomllib.loads(template_path.read_text(encoding="utf-8"))
     assert set(example) == {
+        "dingtalk",
         "jmeter",
         "scripts",
         "schedule",
@@ -101,6 +102,7 @@ def test_example_config_uses_the_public_layout_and_replaces_legacy_assets():
         "excluded_url_keywords": [],
         "additional_date_parameter_names": ["account_period"],
     }
+    assert example["dingtalk"] == {"enabled": False}
     assert not (PROJECT_ROOT / "config.example.toml").exists()
     assert not (PROJECT_ROOT / "config" / "jmeter-save.properties").exists()
 
@@ -140,11 +142,77 @@ def test_load_config_resolves_paths_and_discovers_sorted_jmx_scripts(
         cron="0 2 * * *",
     )
     assert config.report == ReportConfig(excluded_url_keywords=())
+    assert config.dingtalk == DingTalkConfig()
     assert not hasattr(config.schedule, "run_on_startup")
     assert not hasattr(config.scripts[0], "enabled")
     assert not hasattr(config.scripts[0], "properties")
     with pytest.raises(FrozenInstanceError):
         config.scripts[0].timeout_seconds = 12
+
+
+def test_load_config_accepts_enabled_dingtalk_credentials(tmp_path: Path):
+    """Ignoring a valid DingTalk block would leave the scheduler offline."""
+    config_dir = tmp_path / "dingtalk-enabled"
+    _create_required_fixture_files(config_dir)
+    config_path = _write_config(
+        config_dir,
+        VALID_CONFIG_TOML
+        + """
+
+[dingtalk]
+enabled = true
+client_id = "  ding-client-id  "
+client_secret = "  ding-client-secret  "
+""",
+    )
+
+    config = load_config(config_path)
+
+    assert config.dingtalk == DingTalkConfig(
+        enabled=True,
+        client_id="ding-client-id",
+        client_secret="ding-client-secret",
+    )
+
+
+@pytest.mark.parametrize(
+    ("dingtalk_block", "expected_error"),
+    [
+        (
+            "[dingtalk]\nenabled = true\nclient_secret = \"secret\"",
+            "缺少配置项: dingtalk.client_id",
+        ),
+        (
+            "[dingtalk]\nenabled = true\nclient_id = \"client\"",
+            "缺少配置项: dingtalk.client_secret",
+        ),
+        (
+            "[dingtalk]\nenabled = \"yes\"",
+            "dingtalk.enabled 必须是布尔值",
+        ),
+        (
+            "[dingtalk]\nenabled = false\nunknown = true",
+            "dingtalk 包含未知键: unknown",
+        ),
+    ],
+)
+def test_load_config_rejects_invalid_dingtalk_config(
+    tmp_path: Path,
+    dingtalk_block: str,
+    expected_error: str,
+):
+    """Malformed bot settings must fail before the resident service starts."""
+    config_dir = tmp_path / "dingtalk-invalid"
+    _create_required_fixture_files(config_dir)
+    config_path = _write_config(
+        config_dir,
+        f"{VALID_CONFIG_TOML}\n\n{dingtalk_block}\n",
+    )
+
+    with pytest.raises(ConfigError) as captured:
+        load_config(config_path)
+
+    assert expected_error in str(captured.value)
 
 
 def test_load_config_accepts_report_url_exclusion_keywords(tmp_path: Path):

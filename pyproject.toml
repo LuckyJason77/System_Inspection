@@ -10,7 +10,9 @@ version = "0.1.0"
 requires-python = ">=3.11"
 dependencies = [
     "APScheduler>=3.11.3,<4",
+    "dingtalk-stream>=0.24.3,<0.25",
     "Jinja2>=3.1,<4",
+    "requests>=2.32,<3",
     "tzdata",
 ]
 

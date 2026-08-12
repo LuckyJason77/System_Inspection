@@ -16,6 +16,7 @@ from apscheduler.triggers.cron import CronTrigger
 
 from .models import (
     AppConfig,
+    DingTalkConfig,
     JMeterConfig,
     ReportConfig,
     RunnerConfig,
@@ -45,7 +46,7 @@ class JMeterValidationCancelled(RuntimeError):
 
 
 _TOP_LEVEL_KEYS = frozenset(
-    {"jmeter", "scripts", "schedule", "output", "report"}
+    {"jmeter", "scripts", "schedule", "output", "report", "dingtalk"}
 )
 _JMETER_KEYS = frozenset({"executable", "properties_file"})
 _SCRIPTS_KEYS = frozenset({"directory", "timeout_seconds"})
@@ -53,6 +54,9 @@ _SCHEDULE_KEYS = frozenset({"timezone", "cron"})
 _OUTPUT_KEYS = frozenset({"directory"})
 _REPORT_KEYS = frozenset(
     {"excluded_url_keywords", "additional_date_parameter_names"}
+)
+_DINGTALK_KEYS = frozenset(
+    {"enabled", "client_id", "client_secret"}
 )
 _CMD_UNSAFE_PATH_CHARACTERS = frozenset("&%^!|<>()\r\n")
 
@@ -158,6 +162,37 @@ def _get_required_positive_integer(
         errors.append(f"{location}.{key} 必须是正整数")
         return 3600
     return value
+
+
+def _get_optional_boolean(
+    table: dict[str, Any],
+    key: str,
+    location: str,
+    errors: list[str],
+    *,
+    default: bool = False,
+) -> bool:
+    if key not in table:
+        return default
+    value = table[key]
+    if not isinstance(value, bool):
+        errors.append(f"{location}.{key} 必须是布尔值")
+        return default
+    return value
+
+
+def _get_disabled_credential(
+    table: dict[str, Any],
+    key: str,
+    errors: list[str],
+) -> str:
+    if key not in table:
+        return ""
+    value = table[key]
+    if not isinstance(value, str):
+        errors.append(f"dingtalk.{key} 必须是字符串")
+        return ""
+    return value.strip()
 
 
 def _validate_readable_file(
@@ -310,6 +345,7 @@ def load_config(path: str | Path) -> AppConfig:
     schedule_raw = _get_table(raw, "schedule", errors)
     output_raw = _get_table(raw, "output", errors)
     report_raw = _get_optional_table(raw, "report", errors)
+    dingtalk_raw = _get_optional_table(raw, "dingtalk", errors)
     _add_unknown_key_errors(jmeter_raw, _JMETER_KEYS, "jmeter", errors)
     _add_unknown_key_errors(scripts_raw, _SCRIPTS_KEYS, "scripts", errors)
     _add_unknown_key_errors(
@@ -320,6 +356,43 @@ def load_config(path: str | Path) -> AppConfig:
     )
     _add_unknown_key_errors(output_raw, _OUTPUT_KEYS, "output", errors)
     _add_unknown_key_errors(report_raw, _REPORT_KEYS, "report", errors)
+    _add_unknown_key_errors(
+        dingtalk_raw,
+        _DINGTALK_KEYS,
+        "dingtalk",
+        errors,
+    )
+
+    dingtalk_enabled = _get_optional_boolean(
+        dingtalk_raw,
+        "enabled",
+        "dingtalk",
+        errors,
+    )
+    if dingtalk_enabled:
+        dingtalk_client_id = _get_required_string(
+            dingtalk_raw,
+            "client_id",
+            "dingtalk",
+            errors,
+        ) or ""
+        dingtalk_client_secret = _get_required_string(
+            dingtalk_raw,
+            "client_secret",
+            "dingtalk",
+            errors,
+        ) or ""
+    else:
+        dingtalk_client_id = _get_disabled_credential(
+            dingtalk_raw,
+            "client_id",
+            errors,
+        )
+        dingtalk_client_secret = _get_disabled_credential(
+            dingtalk_raw,
+            "client_secret",
+            errors,
+        )
 
     try:
         excluded_url_keywords = parse_excluded_url_keywords(
@@ -470,6 +543,11 @@ def load_config(path: str | Path) -> AppConfig:
             additional_date_parameter_names=(
                 additional_date_parameter_names
             ),
+        ),
+        dingtalk=DingTalkConfig(
+            enabled=dingtalk_enabled,
+            client_id=dingtalk_client_id,
+            client_secret=dingtalk_client_secret,
         ),
     )
 

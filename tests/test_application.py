@@ -15,6 +15,7 @@ from jmeter_suite.application import (
     run_scheduler_application,
 )
 from jmeter_suite.config import ConfigError, JMeterValidationCancelled
+from jmeter_suite.dingtalk_notification import DingTalkDeliveryResult
 from jmeter_suite.locking import LockUnavailableError
 from jmeter_suite.models import (
     JTLParseResult,
@@ -70,6 +71,19 @@ directory = "runs"
         encoding="utf-8",
     )
     return config_path
+
+
+def _enable_dingtalk(config_path: Path) -> None:
+    with config_path.open("a", encoding="utf-8") as config_file:
+        config_file.write(
+            """
+
+[dingtalk]
+enabled = true
+client_id = "ding-client"
+client_secret = "super-secret"
+"""
+        )
 
 
 def _make_report(
@@ -241,6 +255,87 @@ def test_run_once_application_loads_validates_summarizes_and_executes_once(
     assert "运行目录:" in captured.out
     assert "报告:" in captured.out
     assert signal.getsignal(signal.SIGINT) is previous_handler
+
+
+def test_run_once_application_sends_generated_report_when_dingtalk_enabled(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+):
+    """Removing the manual notification hook would leave run_once local-only."""
+    config_path = _write_valid_app_config(tmp_path / "manual-dingtalk")
+    _enable_dingtalk(config_path)
+    observed: dict[str, object] = {}
+
+    def execute(config, cancel_event):
+        return _make_report(config, ReportStatus.PASSED)
+
+    def notify(config, report):
+        observed["config"] = config
+        observed["report"] = report
+        return DingTalkDeliveryResult(
+            summary_sent=True,
+            attachment_sent=True,
+        )
+
+    exit_code = run_once_application(
+        config_path,
+        jmeter_validator=lambda config, event: "5.4.1",
+        suite_executor=execute,
+        report_notifier=notify,
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert observed["config"].dingtalk.client_id == "ding-client"
+    assert observed["report"].run_id == "2026-08-03_12-00"
+    assert "钉钉报告: 已发送" in captured.out
+    assert "super-secret" not in captured.out
+    assert captured.err == ""
+
+
+def test_run_once_notification_failure_does_not_change_suite_exit_code(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+):
+    """A DingTalk outage must not turn a passed manual inspection into failure."""
+    config_path = _write_valid_app_config(tmp_path / "manual-notify-failure")
+    _enable_dingtalk(config_path)
+
+    def notify(config, report):
+        raise RuntimeError("temporary network outage")
+
+    exit_code = run_once_application(
+        config_path,
+        jmeter_validator=lambda config, event: "5.4.1",
+        suite_executor=lambda config, event: _make_report(
+            config,
+            ReportStatus.PASSED,
+        ),
+        report_notifier=notify,
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert "钉钉报告发送失败：temporary network outage" in captured.err
+
+
+def test_run_once_does_not_notify_when_dingtalk_disabled(tmp_path: Path):
+    """The existing disabled configuration must remain network-free."""
+    config_path = _write_valid_app_config(tmp_path / "manual-no-dingtalk")
+
+    exit_code = run_once_application(
+        config_path,
+        jmeter_validator=lambda config, event: "5.4.1",
+        suite_executor=lambda config, event: _make_report(
+            config,
+            ReportStatus.PASSED,
+        ),
+        report_notifier=lambda *args: pytest.fail(
+            "disabled DingTalk must not invoke notifier"
+        ),
+    )
+
+    assert exit_code == 0
 
 
 @pytest.mark.parametrize(

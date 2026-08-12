@@ -1,4 +1,4 @@
-# 提供 JMeter、脚本、调度、报告过滤和输出目录的示例配置。
+# 提供 JMeter、脚本、调度、钉钉、报告过滤和输出目录的示例配置。
 
 [jmeter]
 executable = "D:/tools/apache-jmeter/bin/jmeter.bat"
@@ -11,6 +11,12 @@ timeout_seconds = 3600
 [schedule]
 timezone = "Asia/Shanghai"
 cron = "0 2 * * *"
+
+[dingtalk]
+enabled = false
+# 启用后取消以下注释并填写企业内部应用机器人的凭据。
+# client_id = "dingxxxxxxxx"
+# client_secret = "xxxxxxxx"
 
 [output]
 directory = "../runs"

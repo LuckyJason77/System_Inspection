@@ -12,7 +12,9 @@
 - 与所选 JMeter 版本兼容的 Java；当前开发环境使用 Java 11
 - APScheduler、Jinja2、tzdata
 
-项目不调用 JMeter Dashboard，不发送钉钉通知，报告不加载 CDN 或其他外部资源。
+项目不调用 JMeter Dashboard，报告不加载 CDN 或其他外部资源。常驻调度服务可通过
+钉钉 Stream 长连接接收群命令；定时巡检、群内巡检和 `run_once.py` 一次性巡检完成后
+均可推送结论和报告 ZIP。`generate_report.py` 手动重建历史报告时不会发送钉钉消息。
 
 > [!WARNING]
 > **敏感信息与磁盘增长风险：原始 JTL 会保存 JMeter 实际记录的请求头、请求参数/请求体、响应头、响应正文和断言；HTML 报告只展示完整请求参数、响应参数和断言，不展示请求头或响应头。内容不脱敏、不截断，也不会自动清理。所有运行目录永久保留，可能泄露口令、令牌、个人信息或业务数据，并会持续占用磁盘。请只在访问受控、容量受监控的目录中运行，并由运维人员制定备份、访问控制和人工清理策略。**
@@ -32,7 +34,9 @@ Copy-Item .\config\app.example.toml .\config\app.toml
 
 - APScheduler：五段 Cron 调度；
 - Jinja2：生成离线 HTML；
-- tzdata：提供时区数据。
+- tzdata：提供时区数据；
+- dingtalk-stream：以 Stream 模式接收群机器人消息；
+- requests：调用钉钉令牌、群消息和媒体上传接口。
 
 ## 配置
 
@@ -44,6 +48,7 @@ Copy-Item .\config\app.example.toml .\config\app.toml
 Inspection Items/
 ├─ run_once.py                  # 校验后立即执行全部 JMX
 ├─ scheduler_service.py         # 前台等待 Cron 触发
+├─ check_dingtalk.py            # 向已绑定群测试消息与文件发送
 ├─ 启动定时巡检.bat             # 双击启动前台调度服务
 ├─ generate_report.py           # 使用已有 JTL 手动重建 HTML 报告
 ├─ config/
@@ -69,6 +74,11 @@ timeout_seconds = 3600
 [schedule]
 timezone = "Asia/Shanghai"
 cron = "0 2 * * *"
+
+[dingtalk]
+enabled = false
+# client_id = "dingxxxxxxxx"
+# client_secret = "xxxxxxxx"
 
 [output]
 directory = "../runs"
@@ -101,6 +111,10 @@ additional_date_parameter_names = ["account_period"]
   与参数。
 - `schedule.cron` 必须是标准五段 Cron：`分 时 日 月 周`；示例 `0 2 * * *` 表示每天 02:00。
 - `schedule.timezone` 决定 Cron 和运行目录时间前缀；示例使用 `Asia/Shanghai`。
+- `[dingtalk]` 是可选配置块，省略或 `enabled = false` 时完全保持原有行为。
+  启用时 `client_id` 和 `client_secret` 必须是非空字符串。它们只用于 Stream
+  连接和钉钉开放接口，不会写入调度日志、报告或 manifest。真实凭据只填写到已被
+  Git 忽略的 `config/app.toml`，不要填写到示例配置或提交到版本库。
 - `output.directory` 可以尚未创建，但其最近的现有父目录必须可写。
 - `[report]` 是可选配置块；`report.excluded_url_keywords` 必须是字符串数组，
   默认空数组表示不过滤。生成报告时，程序先移除接口 URL 的 Query 和 fragment，
@@ -121,11 +135,11 @@ additional_date_parameter_names = ["account_period"]
 
 ## 启动方式
 
-项目 v1 从源码目录启动下面三个 Python 文件，并额外提供一个双击启动调度器的
-BAT。三个 Python 脚本和 BAT 都不接受任何启动参数；它们不会根据当前工作目录
+项目 v1 从源码目录启动下面四个 Python 文件，并额外提供一个双击启动调度器的
+BAT。四个 Python 脚本和 BAT 都不接受任何启动参数；它们不会根据当前工作目录
 寻找配置或运行产物。
-`run_once.py` 和 `scheduler_service.py` 固定读取脚本所在项目目录下的
-`config/app.toml`；`generate_report.py` 只读取其中的 `output.directory` 和可选
+`run_once.py`、`scheduler_service.py` 和 `check_dingtalk.py` 固定读取脚本所在项目
+目录下的 `config/app.toml`；`generate_report.py` 只读取其中的 `output.directory` 和可选
 `report.excluded_url_keywords` 和 `report.additional_date_parameter_names`，不会读取
 或校验 JMeter、Java、JMX 配置。
 
@@ -135,6 +149,7 @@ BAT。三个 Python 脚本和 BAT 都不接受任何启动参数；它们不会�
 ```powershell
 .\.venv\Scripts\python.exe .\run_once.py
 .\.venv\Scripts\python.exe .\scheduler_service.py
+.\.venv\Scripts\python.exe .\check_dingtalk.py
 .\.venv\Scripts\python.exe .\generate_report.py
 ```
 
@@ -157,6 +172,10 @@ JTL、manifest 和离线 HTML 报告。它不是无副作用的“仅校验”�
 原始执行可正常完成；报告仍会根据 JTL 中的失败样本或失败断言把脚本/套件
 标记为 `failed`，脚本返回 1。
 
+启用 `[dingtalk]` 且已经通过群命令绑定巡检群时，`run_once.py` 生成报告后会向该群
+发送相同的巡检结论和 ZIP 附件，但不会启动 Stream 监听。尚未绑定群或发送失败时会
+在控制台显示原因；通知结果不会改变原巡检的退出码。
+
 ### `scheduler_service.py`
 
 启动后完成与 `run_once.py` 相同的完整配置和 JMeter 可用性预检，然后作为
@@ -165,12 +184,60 @@ JTL、manifest 和离线 HTML 报告。它不是无副作用的“仅校验”�
 发出真实请求并生成报告。
 
 按 `Ctrl+C` 会安全停止：设置取消事件，必要时终止当前 JMeter 进程树，并等待
-调度器收尾。该脚本不会注册或后台分离为 Windows 系统服务。配置只在应用启动时
-读取一次；修改 `config/app.toml` 后必须停止并重新启动该前台进程才会生效。
+调度器和钉钉 Stream 监听收尾。该脚本不会注册或后台分离为 Windows 系统服务。
+配置只在应用启动时读取一次；修改 `config/app.toml` 后必须停止并重新启动该前台
+进程才会生效。
+
+启用 `[dingtalk]` 后，只有 `scheduler_service.py` 会启动 Stream 监听并接收群命令。
+启动时会校验 SDK 和应用凭据：确定的凭据错误会阻止服务启动；网络、限流或钉钉
+服务端临时故障会记录到 `scheduler.log`，调度器仍会启动并由 Stream 自动重连。
+程序会在创建钉钉客户端前，将 `.dingtalk.com` 合并到进程的 `NO_PROXY` 和
+`no_proxy` 环境变量中，使令牌、文件上传、群消息和 Stream 连接绕过本机代理；已有
+`NO_PROXY` 规则会完整保留，不需要关闭 HTTPS 证书校验。
+`run_once.py` 只在报告生成后进行一次主动推送，不启动 Stream；`generate_report.py`
+始终不会连接或发送钉钉消息。任何钉钉推送失败都不会改变巡检的通过/失败状态。
+
+钉钉侧需创建并发布企业内部应用机器人，启用机器人能力和 Stream 模式，并授予
+“企业内机器人发送消息”相关权限，再把机器人添加到目标群。SDK 使用方式可参考
+[钉钉官方 Python Stream SDK](https://github.com/open-dingtalk/dingtalk-stream-sdk-python)，
+群消息与文件类型参考[机器人群消息接口](https://open.dingtalk.com/document/orgapp/the-robot-sends-a-group-message)
+和[机器人消息类型](https://open.dingtalk.com/document/orgapp/types-of-messages-sent-by-robots)。
+不需要公网回调地址，也不需要自定义 Webhook。
+
+机器人进群后，所有命令都必须在群聊中明确 `@机器人`：
+
+- `@机器人 绑定巡检群`：群内任何成员均可执行；同一时间只能绑定一个群。
+- `@机器人 执行巡检`：绑定群内任意成员均可执行，不要求管理员身份。
+- `@机器人 解绑巡检群`：当前绑定群内任何成员均可执行，其他群不能解绑。
+
+绑定状态保存在 `runs/.runtime/dingtalk-binding.json`，无需修改 TOML。私聊、未 @、
+重复消息和非绑定群不会启动巡检；已有定时、群内或外部 `run_once.py` 巡检占用套件
+锁时，机器人立即回复“已有巡检正在执行，本次未启动”，不会排队。巡检结束后会向
+当前绑定群发送运行 ID、北京时间、状态、耗时及请求/断言统计，并上传
+`自动化巡检报告_<运行ID>.zip`。ZIP 只包含最终 `report.html`，不包含 JTL、JMeter
+日志或 manifest；超过 20 MiB 时只发送结论、超限说明和本地报告路径。
 
 投入定时运行前，应先将 JMX 指向受控目标，人工运行一次 `run_once.py` 并检查
 真实请求、XML JTL、报告内容和磁盘权限；确认敏感数据访问控制和磁盘容量后，
 再启动 `scheduler_service.py`。
+
+### `check_dingtalk.py`
+
+该脚本用于单独验证当前钉钉配置和已绑定群，不启动 JMeter，也不启动 Stream。
+运行前必须在 `config/app.toml` 中启用 `[dingtalk]`、填写 Client ID/Client Secret，
+并至少通过 `@机器人 绑定巡检群` 成功绑定过一次目标群。
+
+运行后会在控制台依次验证：
+
+1. Client ID/Client Secret 能否正常换取访问令牌；
+2. Markdown 文本消息能否发送到已绑定群；
+3. 临时 ZIP 测试文件能否上传；
+4. `sampleFile` 文件消息能否发送到已绑定群。
+
+该操作会在目标群中真实产生一条“钉钉连通性测试”消息和一个
+`钉钉连通性测试.zip` 文件。ZIP 只存在于系统临时目录，测试结束后自动删除。
+任一步失败都会在控制台标明失败阶段，并保留钉钉返回的 HTTP 状态、错误码或错误
+说明；Client Secret 会被替换为 `***`。脚本不会修改群绑定、巡检报告或 manifest。
 
 ### `generate_report.py`
 
@@ -192,10 +259,10 @@ JMeter 日志，也不会生成新的 manifest。
 
 | 退出码 | 含义 |
 |---:|---|
-| `0` | `run_once.py` 的手动套件状态为 `PASSED`，`scheduler_service.py` 正常退出，或 `generate_report.py` 成功生成 HTML。 |
-| `1` | `run_once.py` 已进入执行但套件/报告失败或未全部通过；`scheduler_service.py` 发生运行异常；或手动报告读取、解析、渲染、发布失败。 |
-| `2` | 任意启动参数，配置/JMeter 可用性预检失败，套件或调度器锁冲突/初始化失败，或手动报告没有可选择的完成记录。 |
-| `130` | 全生命周期人工中断；从配置读取、版本检查、JMX 执行到报告收尾，以及调度等待/停止期间均是该退出码。 |
+| `0` | `run_once.py` 的手动套件状态为 `PASSED`，`scheduler_service.py` 正常退出，`check_dingtalk.py` 的消息和文件均发送成功，或 `generate_report.py` 成功生成 HTML。 |
+| `1` | 巡检/报告、调度运行、钉钉凭据或发送链路、手动报告重建中的运行失败。 |
+| `2` | 任意启动参数，配置/JMeter预检、钉钉启用状态或群绑定校验失败，套件/调度器锁冲突，或手动报告没有可选择记录。 |
+| `130` | 配置读取、验证、JMX、报告、调度等待或钉钉测试期间发生人工中断。 |
 
 ## JMeter 执行形态
 
@@ -224,7 +291,8 @@ runs/
 ├─ .runtime/
 │  ├─ suite.lock
 │  ├─ scheduler.lock
-│  └─ scheduler.log[.1 ... .5]
+│  ├─ scheduler.log[.1 ... .5]
+│  └─ dingtalk-binding.json     # 启用并绑定群后生成
 └─ 2026-08-04_07-00/
    ├─ 2026-08-04_07-00-01_Inspection_Report/
    │  └─ report.html             # 单文件套件报告入口
@@ -255,7 +323,7 @@ runs/
 
 ## 锁、重叠运行与调度日志
 
-- `.runtime/suite.lock` 是 `run_once.py` 与 `scheduler_service.py` 的 Cron 任务共用的非阻塞跨进程锁。已有套件占锁时，新触发不会并行运行。
+- `.runtime/suite.lock` 是 `run_once.py`、Cron 任务和钉钉群内手动任务共用的非阻塞跨进程锁。已有套件占锁时，新触发不会并行运行或排队。
 - APScheduler 作业同时限制 `max_instances=1`；同一调度器中的重叠触发会跳过并写日志。
 - 调度器使用内存 JobStore，仅由 Cron 触发；`misfire_grace_time=30`、`coalesce=True`，同一作业积压的触发会合并处理。
 - `.runtime/scheduler.lock` 防止启动第二个常驻调度器进程。
