@@ -156,11 +156,12 @@ def test_report_is_one_page_with_parameters_and_without_removed_fields(
         flags=re.DOTALL,
     )
     assert sample_card is not None
-    assert _decode_compressed_payload(sample_card.group(0)) == {
-        "request": "date_start=2026-08-01&page=1",
-        "response": '{"code":200,"total":46}',
-    }
-    assert "date_start=2026-08-01&amp;page=1" not in report
+    # 小正文择优后按明文内联渲染，不再压缩懒加载
+    assert "data-compressed-payload" not in sample_card.group(0)
+    unescaped_report = html.unescape(report)
+    assert "date_start=2026-08-01&page=1" in unescaped_report
+    assert '{"code":200,"total":46}' in unescaped_report
+    assert "date_start=2026-08-01&amp;page=1" in report
     assert "total&quot;" not in report
     assert "request-header-secret" not in report
     assert "response-header-secret" not in report
@@ -595,17 +596,14 @@ def test_get_query_uses_url_fallback_and_post_body_uses_sampler_fallback(
         flags=re.DOTALL,
     )
     assert len(cards) == 2
-    payloads = [_decode_compressed_payload(card) for card in cards]
-    assert payloads == [
-        {
-            "request": "page=2&keyword=%E5%BC%A0%E4%B8%89",
-            "response": "get-response",
-        },
-        {"request": '{"name":"张三"}', "response": "post-response"},
-    ]
+    for card in cards:
+        assert "data-compressed-payload" not in card
+    unescaped_report = html.unescape(report)
+    assert "page=2&keyword=%E5%BC%A0%E4%B8%89" in unescaped_report
+    assert "get-response" in unescaped_report
+    assert '{"name":"张三"}' in unescaped_report
+    assert "post-response" in unescaped_report
     assert '{&quot;name&quot;:&quot;张三&quot;}' not in report
-    assert "get-response" not in report
-    assert "post-response" not in report
 
 
 def test_failed_requests_are_first_and_toggle_state_is_explicit(
@@ -970,10 +968,8 @@ def test_partial_jtl_and_process_errors_stay_visible_on_the_single_page(
         flags=re.DOTALL,
     )
     assert complete_card is not None
-    assert _decode_compressed_payload(complete_card.group(0))["response"] == (
-        "partial response remains visible"
-    )
-    assert "partial response remains visible" not in report
+    assert "data-compressed-payload" not in complete_card.group(0)
+    assert "partial response remains visible" in complete_card.group(0)
     assert "进程未正常完成" in report
     assert "JMeter exited with exit code 7" in report
 
@@ -1024,7 +1020,10 @@ def test_large_response_is_complete_escaped_and_report_is_self_contained(
         / "report.js"
     ).read_text(encoding="utf-8")
     assert "fetch(" not in packaged_javascript
-    assert f"<script>{packaged_javascript}</script>" in report
+    from jmeter_suite.report import _load_inline_assets
+
+    embedded_javascript = str(_load_inline_assets().javascript)
+    assert f"<script>{embedded_javascript}</script>" in report
     assert re.search(r'\son[a-z]+\s*=', report, flags=re.IGNORECASE) is None
     links = re.findall(r'(?:href|src)="([^"]+)"', report)
     assert links == []

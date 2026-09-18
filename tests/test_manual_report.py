@@ -394,10 +394,9 @@ def test_manual_report_uses_url_filter_without_validating_or_starting_jmeter(
         / "report.html"
     ).read_text(encoding="utf-8")
     assert "保留接口" in report
-    assert _decode_compressed_payloads(report) == [
-        {"request": "month=2026-06", "response": "kept-manual-response"}
-    ]
-    assert "kept-manual-response" not in report
+    assert _decode_compressed_payloads(report) == []
+    assert "month=2026-06" in report
+    assert "kept-manual-response" in report
     assert "过滤接口" not in report
     assert "filtered-manual-response" not in report
     assert "本次巡检通过" in report

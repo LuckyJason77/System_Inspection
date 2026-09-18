@@ -5,7 +5,6 @@ from __future__ import annotations
 import base64
 from datetime import datetime, timedelta, timezone
 import gzip
-import hashlib
 import html
 from importlib import resources
 import json
@@ -182,19 +181,11 @@ def test_generate_passed_report_writes_single_offline_page_and_manifest(
         "report.html"
     }
     suite_html = expected_report_path.read_text(encoding="utf-8")
-    package_root = resources.files("jmeter_suite")
-    report_css = package_root.joinpath("static", "report.css").read_text(
-        encoding="utf-8"
-    )
-    report_js = package_root.joinpath("static", "report.js").read_text(
-        encoding="utf-8"
-    )
-    style_hash = base64.b64encode(
-        hashlib.sha256(report_css.encode("utf-8")).digest()
-    ).decode("ascii")
-    script_hash = base64.b64encode(
-        hashlib.sha256(report_js.encode("utf-8")).digest()
-    ).decode("ascii")
+    inline_assets = report_module._load_inline_assets()
+    report_css = str(inline_assets.css)
+    report_js = str(inline_assets.javascript)
+    style_hash = inline_assets.style_csp_hash.removeprefix("sha256-")
+    script_hash = inline_assets.script_csp_hash.removeprefix("sha256-")
     assert '<html lang="zh-CN">' in suite_html
     assert "自动化巡检" in suite_html
     assert "JMeter 自动化巡检" not in suite_html
@@ -230,14 +221,11 @@ def test_generate_passed_report_writes_single_offline_page_and_manifest(
     assert ">展开<" in suite_html
     assert "完整响应" in suite_html
     assert 'data-raw-response' in suite_html
-    assert 'data-lazy-body="response"' in suite_html
-    assert 'data-compressed-payload' in suite_html
-    assert _decode_compressed_payloads(suite_html) == [
-        {
-            "request": "username=张三&token=secret-query",
-            "response": "第一行\n完整响应\n最后一行",
-        }
-    ]
+    # 小正文择优后按明文内联渲染，不再压缩懒加载
+    assert 'data-lazy-body="response"' not in suite_html
+    assert _decode_compressed_payloads(suite_html) == []
+    assert "username=张三&amp;token=secret-query" in suite_html
+    assert "第一行\n完整响应\n最后一行" in suite_html
     assert "navigator.clipboard" in report_js
     assert "execCommand" in report_js
     assert "fetch(" not in report_js
@@ -303,7 +291,7 @@ def test_generate_passed_report_writes_single_offline_page_and_manifest(
     assert "完整响应" not in manifest_text
     assert "不应进入报告的标准输出" not in manifest_text
     assert "不应进入报告的标准错误" not in manifest_text
-    assert "username=张三&amp;token=secret-query" not in suite_html
+    # 请求头与 samplerData 正文仍在解析层剥离，不会进入报告
     assert "secret-header" not in suite_html
     assert "secret-request-body" not in suite_html
 
@@ -475,10 +463,9 @@ def test_report_ignores_logical_controller_samples_and_counts_only_http_interfac
     assert len(re.findall(r"<article\b[^>]*\bdata-sample-item\b", report)) == 1
     assert "真实 HTTP 接口" in report
     assert "未记录 URL" in report
-    assert _decode_compressed_payloads(report) == [
-        {"request": "", "response": "api-response"}
-    ]
-    assert "api-response" not in report
+    assert _decode_compressed_payloads(report) == []
+    assert "api-response" in report
+    assert "无请求参数" in report
     assert "AMAZON 逻辑控制器" not in report
     assert "controller-only-response" not in report
     assert "controller-only-failure" not in report
@@ -670,14 +657,9 @@ def test_timeout_and_cancelled_status_override_partial_jtl_and_keep_details(
         script_html = script.report_path.read_text(encoding="utf-8")
         assert "JTL 解析不完整" in script_html
         assert "已完成部分" in script_html
-        assert "partial response remains visible" not in script_html
-    assert [
-        payload["response"]
-        for payload in _decode_compressed_payloads(script_html)
-    ] == [
-        "partial response remains visible",
-        "partial response remains visible",
-    ]
+        assert "partial response remains visible" in script_html
+    assert _decode_compressed_payloads(script_html) == []
+    assert script_html.count("partial response remains visible") == 2
     suite_html = result.report_path.read_text(encoding="utf-8")
     assert "超时" in suite_html
     assert "已取消" in suite_html
@@ -723,10 +705,8 @@ def test_completed_malformed_jtl_is_error_with_partial_warning_and_detail(
     assert "JTL 解析不完整" in script_html
     assert "以下仅展示已经完整结束的请求" in script_html
     assert "已完成" in script_html
-    assert _decode_compressed_payloads(script_html) == [
-        {"request": "", "response": "完整样本"}
-    ]
-    assert "完整样本" not in script_html
+    assert _decode_compressed_payloads(script_html) == []
+    assert "完整样本" in script_html
     manifest = json.loads(result.manifest_path.read_text(encoding="utf-8"))
     assert manifest["totals"]["error"] == 1
     assert manifest["totals"]["failed"] == 0
@@ -792,7 +772,7 @@ def test_html_is_csp_safe_escapes_injection_and_preserves_large_response(
     tmp_path: Path,
 ):
     from jmeter_suite.models import ReportStatus
-    from jmeter_suite.report import generate_suite_report
+    from jmeter_suite.report import _load_inline_assets, generate_suite_report
 
     run_directory = tmp_path / "security-run"
     injected_label = '危险"><script>alert("label")</script>'
@@ -840,18 +820,11 @@ def test_html_is_csp_safe_escapes_injection_and_preserves_large_response(
     assert "alert" not in manifest_text
 
     package_root = resources.files("jmeter_suite")
-    report_css = package_root.joinpath(
-        "static", "report.css"
-    ).read_text(encoding="utf-8")
-    report_js = package_root.joinpath(
-        "static", "report.js"
-    ).read_text(encoding="utf-8")
-    style_hash = base64.b64encode(
-        hashlib.sha256(report_css.encode("utf-8")).digest()
-    ).decode("ascii")
-    script_hash = base64.b64encode(
-        hashlib.sha256(report_js.encode("utf-8")).digest()
-    ).decode("ascii")
+    inline_assets = _load_inline_assets()
+    report_css = str(inline_assets.css)
+    report_js = str(inline_assets.javascript)
+    style_hash = inline_assets.style_csp_hash.removeprefix("sha256-")
+    script_hash = inline_assets.script_csp_hash.removeprefix("sha256-")
     expected_csp = (
         "default-src 'none'; "
         f"style-src 'sha256-{style_hash}'; "

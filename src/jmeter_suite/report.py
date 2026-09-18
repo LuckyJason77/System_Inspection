@@ -6,6 +6,7 @@ import base64
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from functools import lru_cache
 import gzip
 import hashlib
 from importlib import resources
@@ -18,7 +19,7 @@ from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
 
 from jinja2 import DictLoader, Environment, StrictUndefined, select_autoescape
-from markupsafe import Markup
+from markupsafe import Markup, escape
 
 from .jtl import parse_jtl
 from .models import (
@@ -47,6 +48,10 @@ _SUITE_DETAILS_MARKER = "<!-- REPORT_SCRIPT_DETAILS -->"
 _SCRIPT_SAMPLES_MARKER = "<!-- REPORT_SAMPLE_CARDS -->"
 _ENDPOINT_SAMPLES_MARKER = "<!-- REPORT_ENDPOINT_SAMPLE_CARDS -->"
 _REPORT_SAMPLE_TYPE = "httpSample"
+# sample.html 中“压缩懒加载”相对“明文内联”额外引入的固定标记字节数
+# （<template> 外壳、正文加载失败提示、两段占位文本与两个 data-lazy-body 属性）。
+# 用于逐样本择优：仅当 gzip+base64 确实更省空间时才压缩。
+_LAZY_PAYLOAD_OVERHEAD_BYTES = 278
 _BEIJING_TIMEZONE = ZoneInfo("Asia/Shanghai")
 _REPORT_FILENAME = "report.html"
 _REPORT_DIRECTORY_SUFFIX = "_Inspection_Report"
@@ -191,11 +196,32 @@ def _csp_hash(source: str) -> str:
     return f"sha256-{encoded}"
 
 
+def _minify_css(source: str) -> str:
+    """压缩内联 CSS；缺少 rcssmin 时回退原文，保证报告始终可生成。"""
+    try:
+        from rcssmin import cssmin
+    except ModuleNotFoundError:
+        return source
+    return cssmin(source, keep_bang_comments=False)
+
+
+def _minify_javascript(source: str) -> str:
+    """压缩内联 JavaScript；缺少 rjsmin 时回退原文，保证报告始终可生成。"""
+    try:
+        from rjsmin import jsmin
+    except ModuleNotFoundError:
+        return source
+    return jsmin(source, keep_bang_comments=False)
+
+
+@lru_cache(maxsize=1)
 def _load_inline_assets() -> _InlineAssets:
     source_root = resources.files("jmeter_suite").joinpath("static")
-    css = source_root.joinpath("report.css").read_text(encoding="utf-8")
-    javascript = source_root.joinpath("report.js").read_text(
-        encoding="utf-8"
+    css = _minify_css(
+        source_root.joinpath("report.css").read_text(encoding="utf-8")
+    )
+    javascript = _minify_javascript(
+        source_root.joinpath("report.js").read_text(encoding="utf-8")
     )
     if "</style" in css.casefold():
         raise RuntimeError("report.css contains an unsafe closing style tag")
@@ -479,6 +505,36 @@ def _compressed_sample_payload(
     return base64.b64encode(compressed).decode("ascii")
 
 
+def _inline_payload_bytes(request_parameters: str, response_data: str) -> int:
+    request_text = escape(request_parameters or "无请求参数")
+    response_text = escape(response_data or "无响应参数")
+    return len(request_text.encode("utf-8")) + len(
+        response_text.encode("utf-8")
+    )
+
+
+def _select_passed_payload(
+    request_parameters: str,
+    response_data: str,
+) -> str | None:
+    """通过样本正文择优：仅当 gzip+base64 懒加载确实比明文内联更省空间时才压缩。
+
+    返回 base64 压缩串表示走懒加载；返回 None 表示按明文内联渲染。
+    小正文或不可压缩正文的压缩开销（gzip 头 + base64 膨胀 + 懒加载固定标记）
+    往往超过其收益，此时明文内联更小且展开即显、免解压、兼容所有浏览器。
+    """
+    compressed = _compressed_sample_payload(request_parameters, response_data)
+    compressed_bytes = (
+        len(compressed.encode("ascii")) + _LAZY_PAYLOAD_OVERHEAD_BYTES
+    )
+    if compressed_bytes < _inline_payload_bytes(
+        request_parameters,
+        response_data,
+    ):
+        return compressed
+    return None
+
+
 def _endpoint_display_url(
     endpoint_key: str,
     samples: tuple[_SampleFragment, ...],
@@ -642,7 +698,7 @@ def _collect_script_report(
                 f"{endpoint_order + 1:04d}"
             ),
             compressed_payload=(
-                _compressed_sample_payload(
+                _select_passed_payload(
                     request_parameters,
                     sample.response_data,
                 )

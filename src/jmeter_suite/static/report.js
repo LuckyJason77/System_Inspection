@@ -8,8 +8,10 @@ let filterGroupStateSnapshot = null;
 const BULK_DETAIL_BATCH_SIZE = 20;
 const BULK_GROUP_BATCH_SIZE = 20;
 const MAX_PAYLOAD_CONCURRENCY = 4;
+const SEARCH_DEBOUNCE_MS = 150;
 let bulkDetailOperation = 0;
 let bulkGroupOperation = 0;
+let searchDebounceTimer = 0;
 
 function fallbackCopy(text) {
   const textarea = document.createElement("textarea");
@@ -90,6 +92,23 @@ const detailControlsByItem = new Map(
 const groupControls = collectGroupControls();
 const groupControlsByButton = new Map(
   groupControls.map((control) => [control.button, control]),
+);
+// 样本节点、搜索文本小写形式和每个接口组的样本列表在加载后固定不变，
+// 预先缓存避免每次筛选都重复查询 DOM 和重复执行 toLocaleLowerCase。
+const sampleItems = Array.from(
+  document.querySelectorAll("[data-sample-item]"),
+);
+const sampleSearchTextByItem = new Map(
+  sampleItems.map((item) => [
+    item,
+    (item.dataset.searchText || "").toLocaleLowerCase("zh-CN"),
+  ]),
+);
+const groupSampleItems = new Map(
+  groupControls.map((control) => [
+    control,
+    Array.from(control.container.querySelectorAll("[data-sample-item]")),
+  ]),
 );
 const allDetailsButton = document.querySelector("[data-all-details-toggle]");
 const allDetailsLabel = allDetailsButton
@@ -650,13 +669,12 @@ function applySampleFilters() {
   }
 
   let visibleCount = 0;
-  document.querySelectorAll("[data-sample-item]").forEach((item) => {
+  sampleItems.forEach((item) => {
     const matchesStatus = (
       activeSampleFilter === "all"
       || item.dataset.status === activeSampleFilter
     );
-    const searchableText = (item.dataset.searchText || "")
-      .toLocaleLowerCase("zh-CN");
+    const searchableText = sampleSearchTextByItem.get(item) || "";
     const matchesSearch = !query || searchableText.includes(query);
     const matchesPeriod = matchesPeriodFilter(item);
     item.hidden = !(matchesStatus && matchesSearch && matchesPeriod);
@@ -666,9 +684,8 @@ function applySampleFilters() {
   });
 
   groupControls.forEach((control) => {
-    const visibleItems = Array.from(
-      control.container.querySelectorAll("[data-sample-item]"),
-    ).filter((item) => !item.hidden);
+    const items = groupSampleItems.get(control) || [];
+    const visibleItems = items.filter((item) => !item.hidden);
     control.container.hidden = visibleItems.length === 0;
     if (filtering && visibleItems.length > 0) {
       setGroupExpanded(control, true);
@@ -695,6 +712,14 @@ function applySampleFilters() {
     count.textContent = String(visibleCount);
   }
   syncAllGroupsToggle();
+}
+
+function scheduleSampleFilter() {
+  window.clearTimeout(searchDebounceTimer);
+  searchDebounceTimer = window.setTimeout(
+    applySampleFilters,
+    SEARCH_DEBOUNCE_MS,
+  );
 }
 
 async function locateFailedSample(button) {
@@ -813,7 +838,7 @@ document.addEventListener("input", (event) => {
     event.target instanceof Element
     && event.target.matches("[data-sample-search]")
   ) {
-    applySampleFilters();
+    scheduleSampleFilter();
   }
 });
 
